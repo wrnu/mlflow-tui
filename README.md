@@ -96,7 +96,7 @@ Basic auth takes precedence when a username is set. `~/.mlflow/credentials` is a
 uv run mlflow-tui --tracking-uri https://mlflow.example --username warren --password 'secret'
 ```
 
-Mouse reporting is on for a real tty (`--no-mouse` or `MLFLOW_TUI_MOUSE=0` to force it off). If the terminal floods mouse or resize sequences into the UI, tracking is turned off and paste/typing only go to the filter field when that field is focused.
+Mouse and touch are on by default (`--no-mouse` to force them off). The UI uses 256-color instead of truecolor so broken terminals cannot dump `38;2;…` codes into the header. On hosts that swallow taps (for example a phone terminal pane), use the keyboard: arrows, `/`, `m`, `f`.
 
 ### 403 Forbidden
 

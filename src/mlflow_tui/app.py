@@ -8,6 +8,7 @@ from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.coordinate import Coordinate
 from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
@@ -54,9 +55,23 @@ def _option_experiment_id(option_id: str | None) -> str | None:
 
 
 class RunsTable(MarqueeDataTable):
-    """Runs list: ctrl-click or double-click marks a run for compare."""
+    """Runs list: tap/click selects; ctrl-click or double-click marks for compare."""
 
     marquee_columns = {"name"}
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        await super()._on_mouse_down(event)
+        meta = event.style.meta
+        row_index = meta.get("row")
+        column_index = meta.get("column", 0)
+        if row_index is None:
+            try:
+                row_index, column_index = self.hover_coordinate
+            except Exception:
+                return
+        if row_index < 0 or row_index >= self.row_count:
+            return
+        self.cursor_coordinate = Coordinate(row_index, max(0, column_index))
 
     async def _on_click(self, event: events.Click) -> None:
         await super()._on_click(event)
@@ -65,6 +80,24 @@ class RunsTable(MarqueeDataTable):
             toggle = getattr(self.app, action_name, None)
             if callable(toggle):
                 toggle()
+
+
+class ExperimentList(OptionList):
+    """Experiment list: tap/click highlights, which loads that experiment's runs."""
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        await super()._on_mouse_down(event)
+        option = event.style.meta.get("option")
+        if option is None:
+            option = getattr(self, "_mouse_hovering_over", None)
+        if option is None:
+            return
+        try:
+            if self.get_option_at_index(option).disabled:
+                return
+        except Exception:
+            return
+        self.highlighted = option
 
 
 class MLFlowTui(App[None]):
@@ -110,10 +143,9 @@ class MLFlowTui(App[None]):
         self._error: str | None = None
         self._exp_marquee_id: str | None = None
         self._exp_marquee_ticks = 0
-        self._mouse_hits: list[float] = []
         self._key_noise: list[float] = []
-        self._mouse_silenced = False
         self._last_quiet = 0.0
+        self._last_repair = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -121,7 +153,7 @@ class MLFlowTui(App[None]):
             with Vertical(id="sidebar"):
                 yield Label("Experiments", classes="pane-title", id="experiments-title")
                 yield Input(placeholder="Filter…", id="filter")
-                yield OptionList(id="experiments")
+                yield ExperimentList(id="experiments")
             with Vertical(id="main"):
                 yield Label("Runs", classes="pane-title", id="runs-title")
                 yield RunsTable(id="runs", cursor_type="row", zebra_stripes=True)
@@ -228,15 +260,6 @@ class MLFlowTui(App[None]):
         elif widget_id == "run-meta":
             self.action_next_metric()
 
-    def on_mouse_move(self, _event: events.MouseMove) -> None:
-        self._note_mouse_noise()
-
-    def on_mouse_scroll_down(self, _event: events.MouseScrollDown) -> None:
-        self._note_mouse_noise()
-
-    def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
-        self._note_mouse_noise()
-
     def on_resize(self, _event: events.Resize) -> None:
         self._keep_terminal_quiet()
 
@@ -275,7 +298,7 @@ class MLFlowTui(App[None]):
         }:
             return
         character = event.character or ""
-        if not character or not character.isprintable():
+        if not character or character.isalpha() or character.isspace():
             return
         event.stop()
         event.prevent_default()
@@ -285,26 +308,15 @@ class MLFlowTui(App[None]):
         self._key_noise = [stamp for stamp in self._key_noise if stamp >= cutoff]
         if len(self._key_noise) >= 8:
             self._keep_terminal_quiet()
+            self._repair_screen()
 
     def on_paste(self, event: events.Paste) -> None:
         if not isinstance(self.focused, Input):
             event.stop()
             event.prevent_default()
 
-    def _note_mouse_noise(self) -> None:
-        now = monotonic()
-        self._mouse_hits.append(now)
-        cutoff = now - 0.15
-        self._mouse_hits = [stamp for stamp in self._mouse_hits if stamp >= cutoff]
-        if len(self._mouse_hits) >= 40:
-            self._disable_mouse_tracking()
-
-    def _disable_mouse_tracking(self) -> None:
-        self._mouse_silenced = True
-        self._keep_terminal_quiet(force=True)
-
     def _allow_mouse(self) -> bool:
-        return self.mouse_enabled and not self._mouse_silenced
+        return self.mouse_enabled
 
     def _install_quiet_input(self) -> None:
         driver = getattr(self, "_driver", None)
@@ -317,6 +329,13 @@ class MLFlowTui(App[None]):
             return
         self._last_quiet = now
         keep_terminal_quiet(getattr(self, "_driver", None), allow_mouse=self._allow_mouse())
+
+    def _repair_screen(self) -> None:
+        now = monotonic()
+        if now - self._last_repair < 0.2:
+            return
+        self._last_repair = now
+        self.refresh()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id != "experiments" or self.focused_view:
@@ -393,7 +412,6 @@ class MLFlowTui(App[None]):
         self.plot_metric = self.metric_keys[index]
         if self.selected_run_id:
             self.load_run_detail(self.selected_run_id)
-        self.notify(f"Plotting {self.plot_metric}")
 
     def reload_experiments(self, *, silent: bool = False) -> None:
         self._exp_seq += 1

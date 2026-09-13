@@ -73,9 +73,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mouse",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Enable mouse reporting (on for a real tty). "
-        "A flood of mouse events is treated as noise and tracking is turned off. "
-        "Override with --mouse / --no-mouse or MLFLOW_TUI_MOUSE.",
+        help="Enable mouse / touch (on by default). Override with --mouse / "
+        "--no-mouse or MLFLOW_TUI_MOUSE.",
     )
     parser.add_argument(
         "--version",
@@ -86,6 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    prepare_terminal()
     args = parse_args(argv)
     if args.refresh < 0:
         print("error: --refresh must be >= 0", file=sys.stderr)
@@ -119,7 +119,6 @@ def main(argv: list[str] | None = None) -> None:
 
     from mlflow_tui.app import MLFlowTui
 
-    prepare_terminal()
     mouse = should_enable_mouse(args.mouse)
     app = MLFlowTui(
         store=store,

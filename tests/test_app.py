@@ -95,6 +95,24 @@ def test_mouse_can_mark_run_without_keyboard_focus() -> None:
     asyncio.run(_run())
 
 
+def test_mouse_down_selects_a_run_row() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.selected_run_id and len(app.runs) > 1:
+                    break
+            first = app.selected_run_id
+            await pilot.mouse_down("#runs", offset=(8, 4))
+            await pilot.pause()
+            assert app.selected_run_id is not None
+            assert app.selected_run_id != first
+
+    asyncio.run(_run())
+
+
 def test_unfocused_paste_does_not_enter_filter() -> None:
     app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
 

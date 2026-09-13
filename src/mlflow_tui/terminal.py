@@ -1,29 +1,37 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Callable
 
-# Optional capability probes. Terminals that do not implement them echo the
-# query (or the reply) into the alt screen as glyphs.
+# Optional probes. Incomplete terminals echo those CSI replies as text.
 _PROBES_OFF = "\x1b[?1004l\x1b[?1016l\x1b[?2048l\x1b[?25l"
-_MOUSE_OFF = "\x1b[?1000l\x1b[?1003l\x1b[?1006l\x1b[?1015l" + _PROBES_OFF
+_MOUSE_OFF = "\x1b[?1000l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1007l" + _PROBES_OFF
+# Button + any-event + SGR mouse. 1003 is what most mobile webviews use for taps.
+# Alternate scroll (1007) sends wheel/touch to the app instead of the host buffer.
+_MOUSE_ON = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1007h" + _PROBES_OFF
+_PIXEL_MOUSE_ON = ("?1015h", "?1016h")
 
 
 def prepare_terminal() -> None:
-    """Skip Kitty keyboard probes. Unsupported terminals echo those CSI replies."""
+    """Skip Kitty probes and truecolor. Those CSI replies show up as header junk."""
     os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
+    os.environ.setdefault("TEXTUAL_COLOR_SYSTEM", "256")
+    if os.environ.get("TEXTUAL_COLOR_SYSTEM") == "256":
+        colorterm = os.environ.get("COLORTERM", "").strip().lower()
+        if colorterm in {"truecolor", "24bit"}:
+            os.environ["COLORTERM"] = "256"
 
 
 def should_enable_mouse(explicit: bool | None = None) -> bool:
-    """Mouse is on for a real tty unless the user or env disables it."""
+    """Clicks, taps, and wheel are on unless the user turns them off.
+
+    Do not require a tty: some web/mobile PTYs report ``isatty() == False``.
+    """
     if explicit is not None:
         return explicit
     env = os.environ.get("MLFLOW_TUI_MOUSE")
     if env is not None and env.strip() != "":
         return env.strip().lower() not in {"0", "false", "no", "off"}
-    if not sys.stdin.isatty():
-        return False
     term = os.environ.get("TERM", "")
     if term in {"", "dumb"}:
         return False
@@ -31,7 +39,7 @@ def should_enable_mouse(explicit: bool | None = None) -> bool:
 
 
 def keep_terminal_quiet(driver: object, *, allow_mouse: bool) -> None:
-    """Re-assert cbreak and optional-probe-off after a resize or mode reset."""
+    """Re-assert cbreak and 256-color-safe modes after resize or a host reset."""
     if driver is None:
         return
     if not allow_mouse:
@@ -44,7 +52,7 @@ def keep_terminal_quiet(driver: object, *, allow_mouse: bool) -> None:
         driver._in_band_window_resize = False
     write = getattr(driver, "write", None)
     if callable(write):
-        write(_PROBES_OFF if allow_mouse else _MOUSE_OFF)
+        write(_MOUSE_ON if allow_mouse else _MOUSE_OFF)
         flush = getattr(driver, "flush", None)
         if callable(flush):
             flush()
@@ -56,31 +64,44 @@ def install_quiet_driver(
     *,
     allow_mouse: Callable[[], bool],
 ) -> None:
-    """Keep optional CSI probes off, and mouse off once the app has disabled it."""
+    """Allow taps, clicks, and wheel; skip pixel-mouse and capability probes."""
     if driver is None or getattr(driver, "_mlflow_tui_quiet", False):
         return
     driver._mlflow_tui_quiet = True
     if hasattr(driver, "_in_band_window_resize"):
         driver._in_band_window_resize = False
-    orig_enable = getattr(driver, "_enable_mouse_support", None)
     orig_disable = getattr(driver, "_disable_mouse_support", None)
+    orig_write = getattr(driver, "write", None)
 
-    def enable_mouse() -> None:
-        if allow_mouse() and callable(orig_enable):
-            orig_enable()
-            return
-        if callable(orig_disable):
-            orig_disable()
-        write = getattr(driver, "write", None)
-        if callable(write):
-            write(_MOUSE_OFF)
+    def write_raw(data: str) -> None:
+        if callable(orig_write):
+            orig_write(data)
             flush = getattr(driver, "flush", None)
             if callable(flush):
                 flush()
 
+    def enable_mouse() -> None:
+        if allow_mouse():
+            if hasattr(driver, "_mouse"):
+                driver._mouse = True
+            write_raw(_MOUSE_ON)
+            return
+        if callable(orig_disable):
+            orig_disable()
+        if hasattr(driver, "_mouse"):
+            driver._mouse = False
+        write_raw(_MOUSE_OFF)
+
+    def write(data: str) -> None:
+        if isinstance(data, str) and any(marker in data for marker in _PIXEL_MOUSE_ON):
+            return
+        if callable(orig_write):
+            orig_write(data)
+
     def drop() -> None:
         return
 
+    driver.write = write
     driver._enable_mouse_support = enable_mouse
     driver._enable_mouse_pixels = drop
     driver._query_in_band_window_resize = drop
@@ -90,7 +111,8 @@ def install_quiet_driver(
     if callable(orig_process):
 
         def process_message(message: object) -> None:
-            if type(message).__name__ == "InBandWindowResize":
+            name = type(message).__name__
+            if name == "InBandWindowResize":
                 return
             orig_process(message)
 
@@ -98,7 +120,7 @@ def install_quiet_driver(
 
 
 def reassert_cbreak(driver: object) -> None:
-    """Resize and focus changes can restore echo; put the PTY back in cbreak."""
+    """Resize can restore echo; put the PTY back in cbreak."""
     fileno = getattr(driver, "fileno", None)
     if not isinstance(fileno, int):
         return
