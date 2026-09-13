@@ -17,8 +17,9 @@ Footer {
 }
 
 #sidebar {
-    width: 34;
-    min-width: 24;
+    width: 18;
+    min-width: 14;
+    max-width: 22;
     background: #0e1620;
     border-right: tall #1c2c3a;
 }
@@ -27,6 +28,8 @@ Footer {
     height: 1fr;
     border: none;
     padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #experiments > .option-list--option-highlighted {
@@ -44,6 +47,9 @@ Footer {
     background: #102230;
     border: none;
     pointer: text;
+    width: 1fr;
+    min-width: 0;
+    text-overflow: ellipsis;
 }
 
 #experiments,
@@ -93,6 +99,8 @@ Footer {
     padding: 0 1;
     background: #102230;
     height: 1;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
 }
 
 DataTable {

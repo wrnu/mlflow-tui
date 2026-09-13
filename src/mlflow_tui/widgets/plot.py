@@ -27,6 +27,8 @@ class MetricPlot(Static):
         self._name = ""
         self._steps: list[int] = []
         self._ys: list[float] = []
+        self._press: tuple[int, int] | None = None
+        self._last_size: tuple[int, int] | None = None
 
     def clear_series(self) -> None:
         self._name = ""
@@ -41,6 +43,10 @@ class MetricPlot(Static):
         self._render_plot()
 
     def on_resize(self) -> None:
+        size = (self.size.width, self.size.height)
+        if size == self._last_size:
+            return
+        self._last_size = size
         self._render_plot()
 
     def _call_app(self, action_name: str) -> None:
@@ -48,20 +54,21 @@ class MetricPlot(Static):
         if callable(action):
             action()
 
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        self._press = (event.x, event.y)
+
     def on_click(self, event: events.Click) -> None:
         event.stop()
+        if self._press is not None:
+            dx = abs(event.x - self._press[0])
+            dy = abs(event.y - self._press[1])
+            self._press = None
+            if dx > 1 or dy > 1:
+                return
         if event.chain >= 2:
             self._call_app("action_toggle_graph_focus")
         else:
             self._call_app("action_next_metric")
-
-    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        event.stop()
-        self._call_app("action_next_metric")
-
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        event.stop()
-        self._call_app("action_prev_metric")
 
     def _render_plot(self) -> None:
         if not self._ys:

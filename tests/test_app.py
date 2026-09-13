@@ -22,6 +22,7 @@ def test_demo_app_mounts_core_widgets() -> None:
             assert app.query_one("#experiments", OptionList).option_count == 3
             assert app.query_one("#runs", DataTable).row_count >= 3
             assert app.selected_run_id == "0042"
+            assert app.query_one("#sidebar").size.width <= 22
 
     asyncio.run(_run())
 

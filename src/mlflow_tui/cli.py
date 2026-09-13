@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from mlflow_tui import __version__
 from mlflow_tui.auth import apply_tracking_auth, auth_hint
+from mlflow_tui.terminal import prepare_terminal, should_enable_mouse
 
 
 def _package_version() -> str:
@@ -69,6 +70,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Select an experiment by name or ID on startup.",
     )
     parser.add_argument(
+        "--mouse",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable mouse reporting. Web/mobile terminals (T3, VS Code) flood "
+        "mouse-move sequences that show up as flashing glyphs; those default off. "
+        "Desktop terminals keep mouse on. Override with --mouse / --no-mouse.",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_package_version()}",
@@ -110,12 +119,13 @@ def main(argv: list[str] | None = None) -> None:
 
     from mlflow_tui.app import MLFlowTui
 
+    prepare_terminal()
     app = MLFlowTui(
         store=store,
         refresh_seconds=args.refresh,
         initial_experiment=args.experiment,
     )
-    app.run(mouse=True)
+    app.run(mouse=should_enable_mouse(args.mouse))
 
 
 if __name__ == "__main__":

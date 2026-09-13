@@ -11,6 +11,7 @@ def test_parse_defaults() -> None:
     assert args.demo is False
     assert args.refresh == 3.0
     assert args.experiment is None
+    assert args.mouse is None
 
 
 def test_parse_flags() -> None:
@@ -44,6 +45,12 @@ def test_parse_password_short_flag() -> None:
     args = parse_args(["--username", "alice", "-p", "secret"])
     assert args.username == "alice"
     assert args.password == "secret"
+
+
+def test_parse_mouse_flags() -> None:
+    assert parse_args([]).mouse is None
+    assert parse_args(["--mouse"]).mouse is True
+    assert parse_args(["--no-mouse"]).mouse is False
 
 
 def test_parse_demo() -> None:

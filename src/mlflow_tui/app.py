@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from time import monotonic
 
+from rich.cells import cell_len
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -35,9 +37,11 @@ from mlflow_tui.formatting import (
     status_text,
     visible_tags,
 )
+from mlflow_tui.marquee import ellipsize, marquee_offset, marquee_slice, sidebar_width
 from mlflow_tui.models import Artifact, Experiment, RunSummary, TrackingError, TrackingStore
 from mlflow_tui.screens.compare import CompareScreen
 from mlflow_tui.widgets.plot import MetricPlot
+from mlflow_tui.widgets.table import MarqueeDataTable
 
 
 def _option_experiment_id(option_id: str | None) -> str | None:
@@ -48,8 +52,10 @@ def _option_experiment_id(option_id: str | None) -> str | None:
     return option_id
 
 
-class RunsTable(DataTable):
+class RunsTable(MarqueeDataTable):
     """Runs list: ctrl-click or double-click marks a run for compare."""
+
+    marquee_columns = {"name"}
 
     async def _on_click(self, event: events.Click) -> None:
         await super()._on_click(event)
@@ -99,13 +105,17 @@ class MLFlowTui(App[None]):
         self._exp_seq = 0
         self._detail_seq = 0
         self._error: str | None = None
+        self._exp_marquee_id: str | None = None
+        self._exp_marquee_ticks = 0
+        self._mouse_hits: list[float] = []
+        self._mouse_silenced = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
                 yield Label("Experiments", classes="pane-title", id="experiments-title")
-                yield Input(placeholder="Filter…  /  or metrics.loss < 0.1", id="filter")
+                yield Input(placeholder="Filter…", id="filter")
                 yield OptionList(id="experiments")
             with Vertical(id="main"):
                 yield Label("Runs", classes="pane-title", id="runs-title")
@@ -116,9 +126,11 @@ class MLFlowTui(App[None]):
                         yield MetricPlot(id="plot")
                     with TabbedContent(id="kv-tabs"):
                         with TabPane("Params", id="tab-params"):
-                            yield DataTable(id="params", cursor_type="row", zebra_stripes=True)
+                            yield MarqueeDataTable(
+                                id="params", cursor_type="row", zebra_stripes=True
+                            )
                         with TabPane("Tags", id="tab-tags"):
-                            yield DataTable(id="tags", cursor_type="row", zebra_stripes=True)
+                            yield MarqueeDataTable(id="tags", cursor_type="row", zebra_stripes=True)
                         with TabPane("Artifacts", id="tab-artifacts"):
                             yield Tree("artifacts", id="artifacts")
         yield Footer()
@@ -129,10 +141,13 @@ class MLFlowTui(App[None]):
         runs.cursor_type = "row"
         runs.zebra_stripes = True
         for table_id in ("params", "tags"):
-            table = self.query_one(f"#{table_id}", DataTable)
-            table.add_columns("Key", "Value")
+            table = self.query_one(f"#{table_id}", MarqueeDataTable)
+            table.marquee_columns = {"key", "value"}
+            table.add_column("Key", key="key", width=14)
+            table.add_column("Value", key="value", width=20)
         if self.refresh_seconds > 0:
             self.set_interval(self.refresh_seconds, self.silent_refresh)
+        self.set_interval(0.14, self._tick_experiment_marquee)
         self.query_one("#experiments", OptionList).focus()
         self.query_one("#experiments", OptionList).add_option(
             Option("Loading experiments…", id="__loading", disabled=True)
@@ -144,6 +159,9 @@ class MLFlowTui(App[None]):
         self.query_one(
             "#runs", DataTable
         ).tooltip = "Click to select · ctrl-click or double-click to mark"
+        self.query_one(
+            "#filter", Input
+        ).tooltip = "Substring or MLflow filter, e.g. metrics.loss < 0.1"
         self.reload_experiments()
 
     def watch_focused_view(self, focused: bool) -> None:
@@ -202,6 +220,36 @@ class MLFlowTui(App[None]):
             self.query_one("#runs", DataTable).focus()
         elif widget_id == "run-meta":
             self.action_next_metric()
+
+    def on_mouse_move(self, _event: events.MouseMove) -> None:
+        self._note_mouse_noise()
+
+    def on_mouse_scroll_down(self, _event: events.MouseScrollDown) -> None:
+        self._note_mouse_noise()
+
+    def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
+        self._note_mouse_noise()
+
+    def _note_mouse_noise(self) -> None:
+        if self._mouse_silenced:
+            return
+        now = monotonic()
+        self._mouse_hits.append(now)
+        cutoff = now - 0.15
+        self._mouse_hits = [stamp for stamp in self._mouse_hits if stamp >= cutoff]
+        if len(self._mouse_hits) >= 40:
+            self._disable_mouse_tracking()
+
+    def _disable_mouse_tracking(self) -> None:
+        if self._mouse_silenced:
+            return
+        self._mouse_silenced = True
+        driver = getattr(self, "_driver", None)
+        disable = getattr(driver, "_disable_mouse_support", None)
+        if callable(disable):
+            disable()
+        if driver is not None:
+            driver._mouse = False
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id != "experiments" or self.focused_view:
@@ -303,20 +351,35 @@ class MLFlowTui(App[None]):
     def _apply_experiments(self, experiments: list[Experiment], silent: bool) -> None:
         self._error = None
         self.experiments = experiments
+        self._exp_marquee_id = None
+        self._exp_marquee_ticks = 0
         option_list = self.query_one("#experiments", OptionList)
         previous = self.selected_experiment_id
         option_list.clear_options()
+        self._sync_sidebar_width()
         if not experiments:
             uri = getattr(self.store, "tracking_uri", "") or ""
             label = "No experiments"
             if uri:
                 label = f"No experiments at {uri}"
-            option_list.add_option(Option(label, id="__empty", disabled=True))
+            option_list.add_option(
+                Option(
+                    ellipsize(label, self._experiment_label_width()),
+                    id="__empty",
+                    disabled=True,
+                )
+            )
             self.query_one("#plot", MetricPlot).clear_series()
             self.query_one("#runs-title", Label).update("Runs")
             return
+        label_width = self._experiment_label_width()
         for experiment in experiments:
-            option_list.add_option(Option(experiment.name, id=f"exp:{experiment.id}"))
+            option_list.add_option(
+                Option(
+                    ellipsize(experiment.name, label_width),
+                    id=f"exp:{experiment.id}",
+                )
+            )
         index = 0
         target = previous or self._experiment_id_by_name(self.initial_experiment)
         if target:
@@ -329,6 +392,7 @@ class MLFlowTui(App[None]):
         if chosen != self.selected_experiment_id or not silent:
             self.selected_experiment_id = chosen
             self.reload_runs(chosen, silent=silent)
+        self.call_after_refresh(self._relabel_experiments)
 
     def reload_runs(self, experiment_id: str, *, silent: bool = False) -> None:
         self._runs_seq += 1
@@ -393,14 +457,18 @@ class MLFlowTui(App[None]):
         metrics = pick_metric_columns(metric_names)
         show_gpu = any(gpu_label(run.tags, run.metrics) != "-" for run in runs)
         table.add_column("", key="mark", width=1)
-        table.add_column("Name", key="name")
-        table.add_column("Status", key="status")
-        table.add_column("Age", key="age")
-        table.add_column("Duration", key="duration")
+        reserved = 1 + 8 + 6 + 8 + 7 * len(metrics) + (4 if show_gpu else 0) + 10
+        name_width = 18
+        if table.size.width:
+            name_width = max(10, min(22, table.size.width - reserved))
+        table.add_column("Name", key="name", width=name_width)
+        table.add_column("Status", key="status", width=8)
+        table.add_column("Age", key="age", width=6)
+        table.add_column("Duration", key="duration", width=8)
         for metric in metrics:
-            table.add_column(metric, key=f"metric-{metric}")
+            table.add_column(metric, key=f"metric-{metric}", width=8)
         if show_gpu:
-            table.add_column("GPU", key="gpu")
+            table.add_column("GPU", key="gpu", width=4)
         now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
         for run in runs:
             mark = "▸" if run.id in self.marked_run_ids else " "
@@ -469,10 +537,10 @@ class MLFlowTui(App[None]):
         table = self.query_one(f"#{table_id}", DataTable)
         table.clear()
         if not items:
-            table.add_row("—", "none")
+            table.add_row("—", "none", key="empty")
             return
-        for key, value in items:
-            table.add_row(key, value)
+        for index, (key, value) in enumerate(items):
+            table.add_row(key, value, key=str(index))
 
     def reset_artifacts(self, run: RunSummary) -> None:
         tree = self.query_one("#artifacts", Tree)
@@ -529,6 +597,66 @@ class MLFlowTui(App[None]):
         option_list = self.query_one("#experiments", OptionList)
         option_list.clear_options()
         option_list.add_option(Option(message, id="__error", disabled=True))
+
+    def _sync_sidebar_width(self) -> None:
+        names = [exp.name for exp in self.experiments]
+        self.query_one("#sidebar").styles.width = sidebar_width(names)
+
+    def _relabel_experiments(self) -> None:
+        opts = self.query_one("#experiments", OptionList)
+        width = self._experiment_label_width()
+        for index, experiment in enumerate(self.experiments):
+            if experiment.id == self._exp_marquee_id:
+                continue
+            try:
+                opts.replace_option_prompt_at_index(index, ellipsize(experiment.name, width))
+            except Exception:
+                continue
+
+    def _experiment_label_width(self) -> int:
+        opts = self.query_one("#experiments", OptionList)
+        return max(4, opts.size.width - 4)
+
+    def _tick_experiment_marquee(self) -> None:
+        opts = self.query_one("#experiments", OptionList)
+        highlighted = opts.highlighted
+        if highlighted is None:
+            return
+        try:
+            option = opts.get_option_at_index(highlighted)
+        except Exception:
+            return
+        exp_id = _option_experiment_id(option.id)
+        if not exp_id:
+            return
+        experiment = next((item for item in self.experiments if item.id == exp_id), None)
+        if not experiment:
+            return
+        width = self._experiment_label_width()
+        if self._exp_marquee_id != exp_id:
+            if self._exp_marquee_id:
+                self._restore_experiment_prompt(self._exp_marquee_id)
+            self._exp_marquee_id = exp_id
+            self._exp_marquee_ticks = 0
+        self._exp_marquee_ticks += 1
+        if cell_len(experiment.name) <= width:
+            return
+        offset = marquee_offset(self._exp_marquee_ticks, cell_len(experiment.name), width)
+        opts.replace_option_prompt_at_index(
+            highlighted, marquee_slice(experiment.name, width, offset)
+        )
+
+    def _restore_experiment_prompt(self, exp_id: str) -> None:
+        experiment = next((item for item in self.experiments if item.id == exp_id), None)
+        if not experiment:
+            return
+        try:
+            self.query_one("#experiments", OptionList).replace_option_prompt(
+                f"exp:{exp_id}",
+                ellipsize(experiment.name, self._experiment_label_width()),
+            )
+        except Exception:
+            return
 
     def _filter_text(self) -> str:
         try:

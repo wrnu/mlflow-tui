@@ -96,6 +96,8 @@ Basic auth takes precedence when a username is set. `~/.mlflow/credentials` is a
 uv run mlflow-tui --tracking-uri https://mlflow.example --username warren --password 'secret'
 ```
 
+On a phone or VS Code/T3 web terminal, mouse reporting is off by default (`--mouse` to force it on). Touch scrolling is ignored so it does not dump escape sequences into the UI.
+
 ### 403 Forbidden
 
 A 403 after you have already passed a username and password is often **not** a bad password:
@@ -127,7 +129,6 @@ A 403 after you have already passed a username and password is often **not** a b
 | Click an experiment or run | Select it |
 | Ctrl-click or double-click a run | Mark / unmark for compare |
 | Click the plot or run header | Cycle the plotted metric |
-| Scroll the plot | Cycle metrics |
 | Double-click the plot | Focus / unfocus the graph |
 | Click footer keys | Same as the keybinding |
 | Click outside the compare dialog | Close it |
