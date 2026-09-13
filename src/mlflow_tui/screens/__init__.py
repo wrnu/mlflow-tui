@@ -1,5 +1,6 @@
 from __future__ import annotations
 
 from mlflow_tui.screens.compare import CompareScreen
+from mlflow_tui.screens.help import HelpScreen
 
-__all__ = ["CompareScreen"]
+__all__ = ["CompareScreen", "HelpScreen"]

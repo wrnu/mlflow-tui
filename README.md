@@ -119,9 +119,12 @@ A 403 after you have already passed a username and password is often **not** a b
 | `space` | Mark a run |
 | `c` | Compare marked runs |
 | `y` | Copy the selected run ID |
-| `f` | Focus the graph (hide the rest of the layout) |
+| `f` | Focus the graph (zoom and pan) |
+| `?` | All key bindings |
 | `esc` | Leave graph focus |
 | `q` | Quit |
+
+Graph keys work after `f` (they are not in the footer): `=`/`-` zoom both axes, `[`/`]` zoom X, `i`/`o` zoom Y, arrows pan, `0` resets. Mouse wheel zooms; drag pans.
 
 ### Mouse
 
@@ -131,6 +134,8 @@ A 403 after you have already passed a username and password is often **not** a b
 | Ctrl-click or double-click a run | Mark / unmark for compare |
 | Click the plot or run header | Cycle the plotted metric |
 | Double-click the plot | Focus / unfocus the graph |
+| Wheel on the plot | Zoom in / out |
+| Drag on the plot | Pan |
 | Click footer keys | Same as the keybinding |
 | Click outside the compare dialog | Close it |
 

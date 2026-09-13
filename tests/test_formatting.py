@@ -218,3 +218,44 @@ def test_line_chart_log_y_plots_all_negative_series() -> None:
     assert "symlog" in chart.splitlines()[0]
     assert any("\u2800" <= char <= "\u28ff" for char in chart)
     assert "n=4" in chart
+
+
+def test_zoom_and_pan_keep_the_window_inside_the_data() -> None:
+    from mlflow_tui.formatting import clamp_view, pan_view, view_window, zoom_view
+
+    start, span = zoom_view(0.0, 1.0, 0.5)
+    assert abs(span - 0.5) < 1e-9
+    assert abs(start - 0.25) < 1e-9
+    start, span = pan_view(start, span, 1.0)
+    assert start + span <= 1.0 + 1e-9
+    start, span = clamp_view(-1.0, 3.0)
+    assert start == 0.0
+    assert span == 1.0
+    lo, hi = view_window(0.0, 100.0, 0.25, 0.5)
+    assert lo == 25.0
+    assert hi == 75.0
+
+
+def test_line_chart_zoom_uses_the_visible_x_window() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    chart = render_line_chart(
+        [1.0, 2.0, 3.0, 4.0],
+        xs=[0, 100, 200, 400],
+        width=48,
+        height=12,
+        title="loss",
+        x0=0,
+        x1=400,
+        x_start=0.0,
+        x_span=0.5,
+        y_start=0.0,
+        y_span=0.5,
+    ).plain
+    header = chart.splitlines()[0]
+    assert "zoom" in header
+    assert "x 2.0×" in header
+    assert "y 2.0×" in header
+    assert "0" in chart
+    assert "200" in chart
+    assert "400" not in chart.splitlines()[-1]

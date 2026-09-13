@@ -41,6 +41,7 @@ from mlflow_tui.formatting import (
 from mlflow_tui.marquee import ellipsize, marquee_offset, marquee_slice, sidebar_width
 from mlflow_tui.models import Artifact, Experiment, RunSummary, TrackingError, TrackingStore
 from mlflow_tui.screens.compare import CompareScreen
+from mlflow_tui.screens.help import HelpScreen
 from mlflow_tui.terminal import install_quiet_driver, keep_probes_off, keep_terminal_quiet
 from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.plot import MetricPlot
@@ -121,6 +122,7 @@ class MLFlowTui(App[None]):
         Binding("c", "compare", "Compare"),
         Binding("y", "copy_run_id", "Yank ID"),
         Binding("f", "toggle_graph_focus", "Focus"),
+        Binding("question_mark", "show_help", "Keys"),
         Binding("escape", "exit_graph_focus", "Back", show=False),
     ]
     focused_view: reactive[bool] = reactive(False, init=False)
@@ -203,7 +205,7 @@ class MLFlowTui(App[None]):
         )
         self.query_one(
             "#plot", MetricPlot
-        ).tooltip = "Click: next metric · double-click: focus graph · l: log y (symlog if ≤0)"
+        ).tooltip = "Click: next metric · double-click: focus · f: zoom/pan · l: log y · ?: keys"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
         self.query_one(
             "#runs", DataTable
@@ -301,6 +303,17 @@ class MLFlowTui(App[None]):
             "c",
             "y",
             "f",
+            "question_mark",
+            "equals",
+            "plus",
+            "minus",
+            "left_square_bracket",
+            "right_square_bracket",
+            "left_curly_bracket",
+            "right_curly_bracket",
+            "shift+up",
+            "shift+down",
+            "0",
             "escape",
             "tab",
             "enter",
@@ -430,6 +443,9 @@ class MLFlowTui(App[None]):
             return
         self.copy_to_clipboard(self.selected_run_id)
         self.notify(f"Copied {self.selected_run_id}")
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpScreen())
 
     def action_toggle_log_scale(self) -> None:
         plot = self.query_one("#plot", MetricPlot)

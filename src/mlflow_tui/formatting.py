@@ -302,6 +302,42 @@ def _padded_bounds(lo: float, hi: float, pad: float = 0.06) -> tuple[float, floa
     return lo - span * pad, hi + span * pad
 
 
+MIN_VIEW_SPAN = 0.04
+ZOOM_IN = 0.7
+ZOOM_OUT = 1.0 / ZOOM_IN
+PAN_STEP = 0.25
+
+
+def clamp_view(start: float, span: float) -> tuple[float, float]:
+    span = min(1.0, max(MIN_VIEW_SPAN, span))
+    start = min(max(0.0, start), 1.0 - span)
+    return start, span
+
+
+def zoom_view(start: float, span: float, factor: float) -> tuple[float, float]:
+    center = start + span / 2
+    span = min(1.0, max(MIN_VIEW_SPAN, span * factor))
+    return clamp_view(center - span / 2, span)
+
+
+def pan_view(start: float, span: float, delta: float) -> tuple[float, float]:
+    return clamp_view(start + delta * span, span)
+
+
+def view_window(lo: float, hi: float, start: float, span: float) -> tuple[float, float]:
+    if hi < lo:
+        lo, hi = hi, lo
+    full = hi - lo
+    if full == 0:
+        return lo, hi
+    left = lo + full * start
+    return left, left + full * span
+
+
+def view_is_zoomed(x_span: float, y_span: float) -> bool:
+    return x_span < 1.0 - 1e-9 or y_span < 1.0 - 1e-9
+
+
 def _auto_linthresh(values: Sequence[float]) -> float:
     abs_nz = [abs(value) for value in values if value != 0 and math.isfinite(value)]
     if not abs_nz:
@@ -361,13 +397,19 @@ def _scale(value: float, lo: float, hi: float, size: int) -> int:
     return max(0, min(size - 1, int(round(t * (size - 1)))))
 
 
+def _scale_free(value: float, lo: float, hi: float, size: int) -> int:
+    if size <= 1 or hi == lo:
+        return 0
+    return int(round((value - lo) / (hi - lo) * (size - 1)))
+
+
 def _plot_dot(cells: list[int], plot_w: int, plot_h: int, px: int, py: int) -> None:
-    if px < 0 or py < 0:
+    canvas_w = plot_w * 2
+    canvas_h = plot_h * 4
+    if px < 0 or py < 0 or px >= canvas_w or py >= canvas_h:
         return
     col, sub_x = divmod(px, 2)
     row, sub_y = divmod(py, 4)
-    if col >= plot_w or row >= plot_h:
-        return
     cells[row * plot_w + col] |= _BRAILLE[sub_y][sub_x]
 
 
@@ -447,6 +489,10 @@ def render_line_chart(
     x1: int | None = None,
     xs: Sequence[float] | None = None,
     log_y: bool = False,
+    x_start: float = 0.0,
+    x_span: float = 1.0,
+    y_start: float = 0.0,
+    y_span: float = 1.0,
 ) -> Text:
     """Braille line chart: 2×4 dots per cell, ticks on nice numbers, x from real steps."""
     if not values:
@@ -460,6 +506,9 @@ def render_line_chart(
             series_x = [float(i) for i in range(len(series_y))]
     log_mode = _y_log_mode(series_y) if log_y else "linear"
     linthresh = _auto_linthresh(series_y) if log_mode == "symlog" else 1.0
+    x_start, x_span = clamp_view(x_start, x_span)
+    y_start, y_span = clamp_view(y_start, y_span)
+    zoomed = view_is_zoomed(x_span, y_span)
     if width < 16 or height < 5:
         head = f"{title}  " if title else ""
         if log_y:
@@ -470,26 +519,37 @@ def render_line_chart(
         return Text(f"{head}{sparkline(spark_src, max(8, width - 2))}", style=_LINE_STYLE)
 
     if log_y:
-        t_lo, t_hi = _padded_axis_bounds(
+        t_full_lo, t_full_hi = _padded_axis_bounds(
             min(series_y), max(series_y), mode=log_mode, linthresh=linthresh
         )
+        t_lo, t_hi = view_window(t_full_lo, t_full_hi, y_start, y_span)
         if log_mode == "log":
             ticks = nice_log_ticks(10**t_lo, 10**t_hi, count=min(6, max(3, height // 3)))
         else:
-            ticks = nice_symlog_ticks(
-                min(series_y),
-                max(series_y),
-                linthresh,
-                count=min(6, max(3, height // 3)),
-            )
+            ticks = [
+                tick
+                for tick in nice_symlog_ticks(
+                    min(series_y),
+                    max(series_y),
+                    linthresh,
+                    count=min(6, max(3, height // 3)),
+                )
+                if t_lo <= _axis_y(tick, mode=log_mode, linthresh=linthresh) <= t_hi
+            ]
+            if not ticks:
+                ticks = nice_symlog_ticks(
+                    min(series_y), max(series_y), linthresh, count=min(6, max(3, height // 3))
+                )
     else:
-        t_lo, t_hi = _padded_bounds(min(series_y), max(series_y))
+        t_full_lo, t_full_hi = _padded_bounds(min(series_y), max(series_y))
+        t_lo, t_hi = view_window(t_full_lo, t_full_hi, y_start, y_span)
         ticks = nice_ticks(t_lo, t_hi, count=min(6, max(3, height // 3)))
-    x_lo = float(x0) if x0 is not None else series_x[0]
-    x_hi = float(x1) if x1 is not None else series_x[-1]
-    if x_hi == x_lo:
-        x_lo -= 1
-        x_hi += 1
+    x_full_lo = float(x0) if x0 is not None else series_x[0]
+    x_full_hi = float(x1) if x1 is not None else series_x[-1]
+    if x_full_hi == x_full_lo:
+        x_full_lo -= 1
+        x_full_hi += 1
+    x_lo, x_hi = view_window(x_full_lo, x_full_hi, x_start, x_span)
 
     gutter = max(6, min(10, max(len(format_tick(tick)) for tick in (ticks or [0.0]))))
     plot_h = max(4, height - 3)
@@ -501,8 +561,8 @@ def render_line_chart(
     cells = [0] * (plot_h * plot_w)
     points: list[tuple[int, int]] = []
     for x_val, y_val in zip(sampled_x, sampled_y, strict=False):
-        px = _scale(x_val, x_lo, x_hi, canvas_w)
-        py = (canvas_h - 1) - _scale(
+        px = _scale_free(x_val, x_lo, x_hi, canvas_w)
+        py = (canvas_h - 1) - _scale_free(
             _axis_y(y_val, mode=log_mode, linthresh=linthresh), t_lo, t_hi, canvas_h
         )
         points.append((px, py))
@@ -525,6 +585,11 @@ def render_line_chart(
         chart.append(f"{title}  ", style=_TITLE_STYLE)
     if log_y:
         chart.append(f"{log_mode}  ", style=_TITLE_STYLE)
+    if zoomed:
+        chart.append(
+            f"zoom x {1 / x_span:.1f}×  y {1 / y_span:.1f}×  ",
+            style=_TITLE_STYLE,
+        )
     chart.append(f"last {format_value(series_y[-1])}", style=_LAST_STYLE)
     lo, hi = min(series_y), max(series_y)
     chart.append(
@@ -557,8 +622,8 @@ def render_line_chart(
     chart.append("\n")
     chart.append(" " * gutter + " └" + "─" * plot_w, style=_AXIS_STYLE)
     chart.append("\n")
-    left = float(x0) if x0 is not None else x_lo
-    right = float(x1) if x1 is not None else x_hi
+    left = x_lo
+    right = x_hi
     mid = (left + right) / 2
     if abs(left - round(left)) < 1e-9 and abs(right - round(right)) < 1e-9:
         mid_label = str(int(round(mid)))

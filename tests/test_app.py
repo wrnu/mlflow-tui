@@ -8,6 +8,7 @@ from textual.widgets import DataTable, Input, OptionList
 
 from mlflow_tui.app import MLFlowTui
 from mlflow_tui.demo import DemoTrackingStore
+from mlflow_tui.screens.help import HelpScreen
 from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.plot import MetricPlot
 
@@ -218,6 +219,71 @@ def test_l_toggles_log_scale_on_plot() -> None:
             await pilot.press("l")
             await pilot.pause()
             assert not plot.log_y
+
+    asyncio.run(_run())
+
+
+def test_question_mark_opens_help_and_zoom_stays_off_the_footer() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            footer = app.query_one(WrappingFooter)
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            keys = footer.query("FooterKey")
+            blob = " ".join(f"{item.key_display} {item.description}" for item in keys)
+            assert "Keys" in blob or "?" in blob
+            assert "Zoom in" not in blob
+            await pilot.press("question_mark")
+            await pilot.pause()
+            assert isinstance(app.screen, HelpScreen)
+            table = app.screen.query_one("#help-keys", DataTable)
+            assert table.row_count >= 10
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, HelpScreen)
+
+    asyncio.run(_run())
+
+
+def test_graph_focus_zoom_and_pan_and_reset() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            plot = app.query_one("#plot", MetricPlot)
+            for _ in range(40):
+                await pilot.pause()
+                if plot._ys:
+                    break
+            await pilot.press("f")
+            await pilot.pause()
+            assert app.focused_view
+            assert plot.has_focus
+            await pilot.press("equals")
+            await pilot.pause()
+            assert plot.x_span < 1.0
+            assert plot.y_span < 1.0
+            x_before = plot.x_start
+            await pilot.press("right")
+            await pilot.pause()
+            assert plot.x_start > x_before
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            x_span = plot.x_span
+            y_before = plot.y_span
+            await pilot.press("i")
+            await pilot.pause()
+            assert plot.y_span < y_before
+            assert plot.x_span == x_span
+            await pilot.press("0")
+            await pilot.pause()
+            assert plot.x_span == 1.0
+            assert plot.y_span == 1.0
+            assert plot.x_start == 0.0
 
     asyncio.run(_run())
 

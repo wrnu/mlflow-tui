@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from textual import events
+from textual.binding import Binding
 from textual.widgets import Static
 
-from mlflow_tui.formatting import render_line_chart
+from mlflow_tui.formatting import (
+    PAN_STEP,
+    ZOOM_IN,
+    ZOOM_OUT,
+    clamp_view,
+    pan_view,
+    render_line_chart,
+    zoom_view,
+)
 from mlflow_tui.models import MetricPoint
 
 
@@ -11,6 +20,19 @@ class MetricPlot(Static):
     """Terminal line chart for a single metric series."""
 
     can_focus = True
+    BINDINGS = [
+        Binding("equals,plus", "zoom_in", "Zoom in", show=False),
+        Binding("minus", "zoom_out", "Zoom out", show=False),
+        Binding("left_square_bracket", "zoom_x_in", "Zoom X in", show=False),
+        Binding("right_square_bracket", "zoom_x_out", "Zoom X out", show=False),
+        Binding("i,shift+up", "zoom_y_in", "Zoom Y in", show=False),
+        Binding("o,shift+down", "zoom_y_out", "Zoom Y out", show=False),
+        Binding("left", "pan_left", "Pan left", show=False),
+        Binding("right", "pan_right", "Pan right", show=False),
+        Binding("up", "pan_up", "Pan up", show=False),
+        Binding("down", "pan_down", "Pan down", show=False),
+        Binding("0", "reset_view", "Reset zoom", show=False),
+    ]
 
     DEFAULT_CSS = """
     MetricPlot {
@@ -28,18 +50,26 @@ class MetricPlot(Static):
         self._steps: list[int] = []
         self._ys: list[float] = []
         self._press: tuple[int, int] | None = None
+        self._dragged = False
         self._last_size: tuple[int, int] | None = None
         self._queued_size: tuple[int, int] | None = None
         self._resize_timer = None
         self.log_y = False
+        self.x_start = 0.0
+        self.x_span = 1.0
+        self.y_start = 0.0
+        self.y_span = 1.0
 
     def clear_series(self) -> None:
         self._name = ""
         self._steps = []
         self._ys = []
+        self.reset_view(render=False)
         self.update("Select a run to plot metrics.")
 
     def set_series(self, name: str, points: list[MetricPoint]) -> None:
+        if name != self._name:
+            self.reset_view(render=False)
         self._name = name
         self._steps = [point.step for point in points]
         self._ys = [point.value for point in points]
@@ -47,6 +77,59 @@ class MetricPlot(Static):
 
     def toggle_log_y(self) -> None:
         self.log_y = not self.log_y
+        self._render_plot()
+
+    def reset_view(self, *, render: bool = True) -> None:
+        self.x_start = 0.0
+        self.x_span = 1.0
+        self.y_start = 0.0
+        self.y_span = 1.0
+        if render and self._ys:
+            self._render_plot()
+
+    def action_zoom_in(self) -> None:
+        self._zoom("both", ZOOM_IN)
+
+    def action_zoom_out(self) -> None:
+        self._zoom("both", ZOOM_OUT)
+
+    def action_zoom_x_in(self) -> None:
+        self._zoom("x", ZOOM_IN)
+
+    def action_zoom_x_out(self) -> None:
+        self._zoom("x", ZOOM_OUT)
+
+    def action_zoom_y_in(self) -> None:
+        self._zoom("y", ZOOM_IN)
+
+    def action_zoom_y_out(self) -> None:
+        self._zoom("y", ZOOM_OUT)
+
+    def action_pan_left(self) -> None:
+        self._pan(-PAN_STEP, 0.0)
+
+    def action_pan_right(self) -> None:
+        self._pan(PAN_STEP, 0.0)
+
+    def action_pan_up(self) -> None:
+        self._pan(0.0, PAN_STEP)
+
+    def action_pan_down(self) -> None:
+        self._pan(0.0, -PAN_STEP)
+
+    def action_reset_view(self) -> None:
+        self.reset_view()
+
+    def _zoom(self, axis: str, factor: float) -> None:
+        if axis in {"x", "both"}:
+            self.x_start, self.x_span = zoom_view(self.x_start, self.x_span, factor)
+        if axis in {"y", "both"}:
+            self.y_start, self.y_span = zoom_view(self.y_start, self.y_span, factor)
+        self._render_plot()
+
+    def _pan(self, dx: float, dy: float) -> None:
+        self.x_start, self.x_span = pan_view(self.x_start, self.x_span, dx)
+        self.y_start, self.y_span = pan_view(self.y_start, self.y_span, dy)
         self._render_plot()
 
     def on_resize(self) -> None:
@@ -72,9 +155,36 @@ class MetricPlot(Static):
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         self._press = (event.x, event.y)
+        self._dragged = False
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._press is None:
+            return
+        dx = event.x - self._press[0]
+        dy = event.y - self._press[1]
+        if abs(dx) <= 1 and abs(dy) <= 1:
+            return
+        width = max(self.size.width, 1)
+        height = max(self.size.height, 1)
+        self._pan(-dx / width, dy / height)
+        self._press = None
+        self._dragged = True
+        event.stop()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        event.stop()
+        self._zoom("both", ZOOM_IN)
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        event.stop()
+        self._zoom("both", ZOOM_OUT)
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
+        if self._dragged:
+            self._dragged = False
+            self._press = None
+            return
         if self._press is not None:
             dx = abs(event.x - self._press[0])
             dy = abs(event.y - self._press[1])
@@ -92,6 +202,8 @@ class MetricPlot(Static):
             return
         width = max(self.size.width, 0)
         height = max(self.size.height, 0)
+        self.x_start, self.x_span = clamp_view(self.x_start, self.x_span)
+        self.y_start, self.y_span = clamp_view(self.y_start, self.y_span)
         chart = render_line_chart(
             self._ys,
             xs=self._steps,
@@ -101,5 +213,9 @@ class MetricPlot(Static):
             x0=self._steps[0] if self._steps else 0,
             x1=self._steps[-1] if self._steps else 0,
             log_y=self.log_y,
+            x_start=self.x_start,
+            x_span=self.x_span,
+            y_start=self.y_start,
+            y_span=self.y_span,
         )
         self.update(chart)
