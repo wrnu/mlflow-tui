@@ -125,3 +125,7 @@ Screen.graph-focus #plot-pane {
     width: 1fr;
     border-right: none;
 }
+
+#plot {
+    background: #080d12;
+}

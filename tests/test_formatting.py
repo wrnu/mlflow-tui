@@ -99,16 +99,64 @@ def test_line_chart_contains_axes_and_title() -> None:
         title="loss",
         x0=0,
         x1=79,
-    )
+    ).plain
     assert "loss" in chart
+    assert "last" in chart
     assert "┤" in chart
     assert "└" in chart
-    assert "●" in chart
+    assert any("\u2800" <= char <= "\u28ff" for char in chart)
+    assert "79" in chart
 
 
 def test_line_chart_falls_back_to_sparkline() -> None:
     from mlflow_tui.formatting import SPARK_CHARS, render_line_chart
 
-    tiny = render_line_chart([1, 2, 3, 4], width=8, height=3, title="loss")
+    tiny = render_line_chart([1, 2, 3, 4], width=8, height=3, title="loss").plain
     assert tiny.startswith("loss")
     assert any(ch in tiny for ch in SPARK_CHARS)
+
+
+def test_nice_ticks_use_1_2_5() -> None:
+    from mlflow_tui.formatting import nice_ticks
+
+    ticks = nice_ticks(0.0, 1.0, count=5)
+    assert ticks[0] >= 0
+    assert ticks[-1] <= 1.0000001
+    assert ticks == sorted(ticks)
+    steps = [round(ticks[i + 1] - ticks[i], 10) for i in range(len(ticks) - 1)]
+    assert len(set(steps)) == 1
+
+
+def test_line_chart_keeps_spike() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    values = [0.0] * 80
+    values[40] = 10.0
+    lines = [
+        line
+        for line in render_line_chart(values, width=52, height=14, title="spike").plain.splitlines()
+        if "│" in line or "┤" in line
+    ]
+    top = "".join(lines[:3])
+    assert any("\u2800" <= char <= "\u28ff" for char in top)
+
+
+def test_line_chart_maps_x_from_steps() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    chart = render_line_chart(
+        [1.0, 2.0, 3.0],
+        xs=[100, 500, 900],
+        width=48,
+        height=12,
+        title="loss",
+        x0=100,
+        x1=900,
+    ).plain
+    assert "100" in chart
+    assert "900" in chart
+    assert "500" in chart
+    assert (
+        "39.5"
+        not in render_line_chart([0.0] * 80, width=52, height=12, title="spike", x0=0, x1=79).plain
+    )

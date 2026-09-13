@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -188,9 +189,95 @@ def visible_tags(tags: dict[str, str]) -> list[tuple[str, str]]:
     return items
 
 
-def _draw_line(grid: list[list[str]], x0: int, y0: int, x1: int, y1: int) -> None:
-    height = len(grid)
-    width = len(grid[0]) if grid else 0
+_BRAILLE = (
+    (0x01, 0x08),
+    (0x02, 0x10),
+    (0x04, 0x20),
+    (0x40, 0x80),
+)
+_LINE_STYLE = "#7ee0ff"
+_LAST_STYLE = "bold #3ddc97"
+_AXIS_STYLE = "#6b8796"
+_GRID_STYLE = "#243848"
+_TITLE_STYLE = "bold #c5d4de"
+
+
+def format_tick(value: float) -> str:
+    if not math.isfinite(value):
+        return "nan"
+    if value == 0:
+        return "0"
+    av = abs(value)
+    if av >= 1_000_000 or av < 1e-4:
+        return f"{value:.2e}"
+    text = f"{value:.6f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _format_x(value: float) -> str:
+    if math.isfinite(value) and abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return format_tick(value)
+
+
+def nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
+    """Axis ticks on 1/2/5 × 10^n so labels match the data instead of row interpolation."""
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        return [0.0]
+    if hi < lo:
+        lo, hi = hi, lo
+    span = hi - lo
+    if span == 0 or count < 2:
+        return [lo]
+    raw = span / (count - 1)
+    exp = math.floor(math.log10(raw)) if raw > 0 else 0
+    base = 10**exp
+    step = 10 * base
+    for candidate in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if candidate * base >= raw * 0.55:
+            step = candidate * base
+            break
+    start = math.ceil(lo / step - 1e-12) * step
+    ticks: list[float] = []
+    value = start
+    for _ in range(24):
+        if value > hi + step * 1e-9:
+            break
+        ticks.append(value)
+        value += step
+    return ticks or [lo, hi]
+
+
+def _padded_bounds(lo: float, hi: float, pad: float = 0.06) -> tuple[float, float]:
+    if hi < lo:
+        lo, hi = hi, lo
+    if hi == lo:
+        delta = max(abs(lo) * 0.1, 1e-6)
+        return lo - delta, hi + delta
+    span = hi - lo
+    return lo - span * pad, hi + span * pad
+
+
+def _scale(value: float, lo: float, hi: float, size: int) -> int:
+    if size <= 1 or hi == lo:
+        return 0
+    t = (value - lo) / (hi - lo)
+    return max(0, min(size - 1, int(round(t * (size - 1)))))
+
+
+def _plot_dot(cells: list[int], plot_w: int, plot_h: int, px: int, py: int) -> None:
+    if px < 0 or py < 0:
+        return
+    col, sub_x = divmod(px, 2)
+    row, sub_y = divmod(py, 4)
+    if col >= plot_w or row >= plot_h:
+        return
+    cells[row * plot_w + col] |= _BRAILLE[sub_y][sub_x]
+
+
+def _draw_dots(
+    cells: list[int], plot_w: int, plot_h: int, x0: int, y0: int, x1: int, y1: int
+) -> None:
     dx = abs(x1 - x0)
     dy = abs(y1 - y0)
     sx = 1 if x0 < x1 else -1
@@ -198,15 +285,7 @@ def _draw_line(grid: list[list[str]], x0: int, y0: int, x1: int, y1: int) -> Non
     err = dx - dy
     x, y = x0, y0
     while True:
-        if 0 <= y < height and 0 <= x < width:
-            if dy == 0:
-                grid[y][x] = "─"
-            elif dx == 0:
-                grid[y][x] = "│"
-            elif (sy > 0) == (sx > 0):
-                grid[y][x] = "╲"
-            else:
-                grid[y][x] = "╱"
+        _plot_dot(cells, plot_w, plot_h, x, y)
         if x == x1 and y == y1:
             break
         e2 = 2 * err
@@ -218,6 +297,50 @@ def _draw_line(grid: list[list[str]], x0: int, y0: int, x1: int, y1: int) -> Non
             y += sy
 
 
+def _minmax_series(
+    xs: list[float], ys: list[float], buckets: int
+) -> tuple[list[float], list[float]]:
+    n = len(ys)
+    if n <= max(buckets * 2, 2):
+        return xs, ys
+    out_x: list[float] = []
+    out_y: list[float] = []
+    for bucket in range(buckets):
+        start = int(bucket * n / buckets)
+        end = int((bucket + 1) * n / buckets)
+        if start >= end:
+            continue
+        chunk_y = ys[start:end]
+        i_min = min(range(len(chunk_y)), key=chunk_y.__getitem__)
+        i_max = max(range(len(chunk_y)), key=chunk_y.__getitem__)
+        for index in sorted({0, i_min, i_max, len(chunk_y) - 1}):
+            out_x.append(xs[start + index])
+            out_y.append(chunk_y[index])
+    return out_x, out_y
+
+
+def _x_label_line(plot_w: int, labels: list[tuple[float, str]]) -> str:
+    buf = [" "] * plot_w
+    used: list[tuple[int, int]] = []
+    for frac, text in labels:
+        if not text:
+            continue
+        if frac <= 0:
+            start = 0
+        elif frac >= 1:
+            start = max(0, plot_w - len(text))
+        else:
+            start = int(round(frac * (plot_w - 1) - len(text) / 2))
+            start = max(0, min(start, plot_w - len(text)))
+        end = start + len(text)
+        if any(start < right and end > left for left, right in used):
+            continue
+        for i, char in enumerate(text):
+            buf[start + i] = char
+        used.append((start, end))
+    return "".join(buf)
+
+
 def render_line_chart(
     values: Sequence[float],
     *,
@@ -226,52 +349,96 @@ def render_line_chart(
     title: str = "",
     x0: int | None = None,
     x1: int | None = None,
-) -> str:
+    xs: Sequence[float] | None = None,
+) -> Text:
+    """Braille line chart: 2×4 dots per cell, ticks on nice numbers, x from real steps."""
     if not values:
-        return "No metric history"
+        return Text("No metric history", style="dim")
+    series_y = [float(v) for v in values]
+    if xs is None:
+        series_x = [float(i) for i in range(len(series_y))]
+    else:
+        series_x = [float(v) for v in xs]
+        if len(series_x) != len(series_y):
+            series_x = [float(i) for i in range(len(series_y))]
     if width < 16 or height < 5:
         head = f"{title}  " if title else ""
-        return f"{head}{sparkline(values, max(8, width - 2))}"
+        return Text(f"{head}{sparkline(series_y, max(8, width - 2))}", style=_LINE_STYLE)
 
-    plot_h = max(3, height - (2 if title else 1) - 1)
-    plot_w = max(8, width - 9)
-    sampled = downsample(list(values), plot_w)
-    lo = min(sampled)
-    hi = max(sampled)
-    if hi == lo:
-        hi = lo + max(abs(lo) * 0.1, 1e-6)
-    pad = (hi - lo) * 0.08
-    lo -= pad
-    hi += pad
-    span = hi - lo
+    y_lo, y_hi = _padded_bounds(min(series_y), max(series_y))
+    x_lo = float(x0) if x0 is not None else series_x[0]
+    x_hi = float(x1) if x1 is not None else series_x[-1]
+    if x_hi == x_lo:
+        x_lo -= 1
+        x_hi += 1
 
-    coords: list[tuple[int, int]] = []
-    last = max(len(sampled) - 1, 1)
-    for i, value in enumerate(sampled):
-        col = round(i * (plot_w - 1) / last)
-        row = round((hi - value) / span * (plot_h - 1))
-        coords.append((col, row))
+    ticks = nice_ticks(y_lo, y_hi, count=min(6, max(3, height // 3)))
+    gutter = max(6, min(10, max(len(format_tick(tick)) for tick in [*ticks, y_lo, y_hi])))
+    plot_h = max(4, height - 3)
+    plot_w = max(8, width - gutter - 2)
+    canvas_w = plot_w * 2
+    canvas_h = plot_h * 4
 
-    grid = [[" " for _ in range(plot_w)] for _ in range(plot_h)]
-    for i in range(len(coords) - 1):
-        _draw_line(grid, *coords[i], *coords[i + 1])
-    for col, row in coords:
-        if 0 <= row < plot_h and 0 <= col < plot_w:
-            grid[row][col] = "●"
+    sampled_x, sampled_y = _minmax_series(series_x, series_y, canvas_w)
+    cells = [0] * (plot_h * plot_w)
+    points: list[tuple[int, int]] = []
+    for x_val, y_val in zip(sampled_x, sampled_y, strict=False):
+        px = _scale(x_val, x_lo, x_hi, canvas_w)
+        py = (canvas_h - 1) - _scale(y_val, y_lo, y_hi, canvas_h)
+        points.append((px, py))
+    for i in range(len(points) - 1):
+        _draw_dots(cells, plot_w, plot_h, *points[i], *points[i + 1])
+    last_px, last_py = points[-1]
+    last_col, last_row = last_px // 2, last_py // 4
+    last_index = -1
+    if 0 <= last_row < plot_h and 0 <= last_col < plot_w:
+        last_index = last_row * plot_w + last_col
 
-    lines: list[str] = []
+    tick_rows = {(plot_h - 1) - _scale(tick, y_lo, y_hi, plot_h): tick for tick in ticks}
+
+    chart = Text()
     if title:
-        lines.append(title)
-    label_every = max(1, (plot_h - 1) // 3)
-    for row in range(plot_h):
-        y_val = hi - span * row / max(plot_h - 1, 1)
-        label = f"{format_value(y_val):>7}"
-        tick = "┤" if row % label_every == 0 or row == plot_h - 1 else "│"
-        lines.append(f"{label} {tick}{''.join(grid[row])}")
+        chart.append(f"{title}  ", style=_TITLE_STYLE)
+    chart.append(f"last {format_value(series_y[-1])}", style=_LAST_STYLE)
+    lo, hi = min(series_y), max(series_y)
+    chart.append(
+        f"  min {format_value(lo)}  max {format_value(hi)}  n={len(series_y)}",
+        style=_AXIS_STYLE,
+    )
+    chart.append("\n")
 
-    left = str(x0 if x0 is not None else 0)
-    right = str(x1 if x1 is not None else len(values) - 1)
-    lines.append(" " * 8 + "└" + "─" * plot_w)
-    gap = max(1, plot_w - len(left))
-    lines.append(" " * 8 + left + right.rjust(gap))
-    return "\n".join(lines)
+    for row in range(plot_h):
+        tick = tick_rows.get(row)
+        if tick is not None:
+            chart.append(f"{format_tick(tick):>{gutter}}", style=_AXIS_STYLE)
+            chart.append(" ┤", style=_AXIS_STYLE)
+        else:
+            chart.append(" " * gutter, style=_AXIS_STYLE)
+            chart.append(" │", style=_AXIS_STYLE)
+        for col in range(plot_w):
+            index = row * plot_w + col
+            bits = cells[index]
+            if bits:
+                style = _LAST_STYLE if index == last_index else _LINE_STYLE
+                chart.append(chr(0x2800 + bits), style=style)
+            elif tick is not None:
+                chart.append("┈", style=_GRID_STYLE)
+            else:
+                chart.append(" ")
+        if row != plot_h - 1:
+            chart.append("\n")
+
+    chart.append("\n")
+    chart.append(" " * gutter + " └" + "─" * plot_w, style=_AXIS_STYLE)
+    chart.append("\n")
+    left = float(x0) if x0 is not None else x_lo
+    right = float(x1) if x1 is not None else x_hi
+    mid = (left + right) / 2
+    if abs(left - round(left)) < 1e-9 and abs(right - round(right)) < 1e-9:
+        mid_label = str(int(round(mid)))
+    else:
+        mid_label = _format_x(mid)
+    x_labels = [(0.0, _format_x(left)), (0.5, mid_label), (1.0, _format_x(right))]
+    chart.append(" " * (gutter + 2), style=_AXIS_STYLE)
+    chart.append(_x_label_line(plot_w, x_labels), style=_AXIS_STYLE)
+    return chart

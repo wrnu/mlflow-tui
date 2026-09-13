@@ -137,13 +137,13 @@ class MLFlowTui(App[None]):
         self.query_one("#experiments", OptionList).add_option(
             Option("Loading experiments…", id="__loading", disabled=True)
         )
-        self.query_one("#plot", MetricPlot).tooltip = (
-            "Click: next metric · wheel: cycle · double-click: focus graph"
-        )
+        self.query_one(
+            "#plot", MetricPlot
+        ).tooltip = "Click: next metric · wheel: cycle · double-click: focus graph"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
-        self.query_one("#runs", DataTable).tooltip = (
-            "Click to select · ctrl-click or double-click to mark"
-        )
+        self.query_one(
+            "#runs", DataTable
+        ).tooltip = "Click to select · ctrl-click or double-click to mark"
         self.reload_experiments()
 
     def watch_focused_view(self, focused: bool) -> None:
@@ -251,9 +251,7 @@ class MLFlowTui(App[None]):
             self.runs_by_id[run_id] for run_id in self.marked_run_ids if run_id in self.runs_by_id
         ]
         if len(runs) < 2:
-            self.notify(
-                "Mark at least two runs (space, ctrl-click, or double-click), then compare"
-            )
+            self.notify("Mark at least two runs (space, ctrl-click, or double-click), then compare")
             return
         self.push_screen(CompareScreen(runs))
 

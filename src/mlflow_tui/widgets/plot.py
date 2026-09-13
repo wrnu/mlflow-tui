@@ -71,6 +71,7 @@ class MetricPlot(Static):
         height = max(self.size.height, 0)
         chart = render_line_chart(
             self._ys,
+            xs=self._steps,
             width=width,
             height=height,
             title=self._name,
