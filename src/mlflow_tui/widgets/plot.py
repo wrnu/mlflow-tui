@@ -41,6 +41,7 @@ class MetricPlot(Static):
         overflow: hidden;
         padding: 0 1;
         pointer: pointer;
+        text-wrap: nowrap;
     }
     """
 
@@ -55,6 +56,7 @@ class MetricPlot(Static):
         self._queued_size: tuple[int, int] | None = None
         self._resize_timer = None
         self.log_y = False
+        self.smooth = False
         self.x_start = 0.0
         self.x_span = 1.0
         self.y_start = 0.0
@@ -77,6 +79,10 @@ class MetricPlot(Static):
 
     def toggle_log_y(self) -> None:
         self.log_y = not self.log_y
+        self._render_plot()
+
+    def toggle_smooth(self) -> None:
+        self.smooth = not self.smooth
         self._render_plot()
 
     def reset_view(self, *, render: bool = True) -> None:
@@ -213,6 +219,7 @@ class MetricPlot(Static):
             x0=self._steps[0] if self._steps else 0,
             x1=self._steps[-1] if self._steps else 0,
             log_y=self.log_y,
+            smooth=self.smooth,
             x_start=self.x_start,
             x_span=self.x_span,
             y_start=self.y_start,

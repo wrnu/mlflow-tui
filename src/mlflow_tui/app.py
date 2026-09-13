@@ -114,17 +114,20 @@ class MLFlowTui(App[None]):
     CSS_PATH = "app.tcss"
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh"),
+        Binding("r", "refresh", "Refresh", show=False),
         Binding("slash", "focus_filter", "Filter"),
         Binding("m", "next_metric", "Metric"),
-        Binding("l", "toggle_log_scale", "Log"),
-        Binding("space", "toggle_mark", "Mark"),
-        Binding("c", "compare", "Compare"),
-        Binding("y", "copy_run_id", "Yank ID"),
+        Binding("n", "prev_metric", "Prev metric", show=False),
+        Binding("l", "toggle_log_scale", "Log", show=False),
+        Binding("s", "toggle_smooth", "Smooth", show=False),
+        Binding("space", "toggle_mark", "Mark", show=False),
+        Binding("c", "compare", "Compare", show=False),
+        Binding("y", "copy_run_id", "Yank ID", show=False),
         Binding("f", "toggle_graph_focus", "Focus"),
         Binding("question_mark", "show_help", "Keys"),
         Binding("escape", "exit_graph_focus", "Back", show=False),
     ]
+    ENABLE_COMMAND_PALETTE = False
     focused_view: reactive[bool] = reactive(False, init=False)
 
     def __init__(
@@ -205,7 +208,7 @@ class MLFlowTui(App[None]):
         )
         self.query_one(
             "#plot", MetricPlot
-        ).tooltip = "Click: next metric · double-click: focus · f: zoom/pan · l: log y · ?: keys"
+        ).tooltip = "Click: next metric · double-click: focus · f: zoom/pan · l: log · s: smooth"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
         self.query_one(
             "#runs", DataTable
@@ -450,6 +453,10 @@ class MLFlowTui(App[None]):
     def action_toggle_log_scale(self) -> None:
         plot = self.query_one("#plot", MetricPlot)
         plot.toggle_log_y()
+
+    def action_toggle_smooth(self) -> None:
+        plot = self.query_one("#plot", MetricPlot)
+        plot.toggle_smooth()
 
     def action_next_metric(self) -> None:
         self._cycle_metric(1)

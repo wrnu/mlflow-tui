@@ -223,6 +223,50 @@ def test_l_toggles_log_scale_on_plot() -> None:
     asyncio.run(_run())
 
 
+def test_s_toggles_ema_smoothing_on_plot() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            plot = app.query_one("#plot", MetricPlot)
+            for _ in range(40):
+                await pilot.pause()
+                if plot._ys:
+                    break
+            assert not plot.smooth
+            await pilot.press("s")
+            await pilot.pause()
+            assert plot.smooth
+            rendered = plot.render()
+            plain = rendered.plain if isinstance(rendered, Text) else str(rendered)
+            assert "smooth" in plain
+            await pilot.press("s")
+            await pilot.pause()
+            assert not plot.smooth
+
+    asyncio.run(_run())
+
+
+def test_m_and_n_step_metrics_forward_and_back() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs and app.plot_metric and len(app.metric_keys) > 1:
+                    break
+            first = app.plot_metric
+            await pilot.press("m")
+            await pilot.pause()
+            assert app.plot_metric != first
+            await pilot.press("n")
+            await pilot.pause()
+            assert app.plot_metric == first
+
+    asyncio.run(_run())
+
+
 def test_question_mark_opens_help_and_zoom_stays_off_the_footer() -> None:
     app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
 
@@ -236,6 +280,12 @@ def test_question_mark_opens_help_and_zoom_stays_off_the_footer() -> None:
             keys = footer.query("FooterKey")
             blob = " ".join(f"{item.key_display} {item.description}" for item in keys)
             assert "Keys" in blob or "?" in blob
+            assert "Filter" in blob
+            assert "Metric" in blob
+            assert "Focus" in blob
+            assert "Quit" in blob
+            for hidden in ("Refresh", "Log", "Mark", "Compare", "Yank", "Smooth", "Prev"):
+                assert hidden not in blob
             assert "Zoom in" not in blob
             await pilot.press("question_mark")
             await pilot.pause()
@@ -305,6 +355,7 @@ def test_footer_wraps_to_multiple_rows_when_narrow() -> None:
                 if footer.size.height >= 2:
                     break
             assert footer.size.height >= 2
-            assert len(footer.query("FooterKey")) >= 8
+            descriptions = {item.description for item in footer.query("FooterKey")}
+            assert descriptions == {"Quit", "Filter", "Metric", "Focus", "Keys"}
 
     asyncio.run(_run())

@@ -109,13 +109,17 @@ A 403 after you have already passed a username and password is often **not** a b
 
 ### Keys
 
+The footer keeps the everyday keys: `/` filter, `m` metric, `f` focus graph, `?` all bindings, `q` quit. Everything else still works; `?` lists them.
+
 | Key | Action |
 | --- | --- |
 | `tab` | Cycle panes |
 | `/` | Filter experiments and runs |
 | `r` | Refresh |
-| `m` | Cycle the plotted metric |
+| `m` | Next plotted metric |
+| `n` | Previous plotted metric |
 | `l` | Toggle log Y (symlog when the series includes 0 or negatives) |
+| `s` | Toggle EMA smoothing (raw stays dim underneath) |
 | `space` | Mark a run |
 | `c` | Compare marked runs |
 | `y` | Copy the selected run ID |

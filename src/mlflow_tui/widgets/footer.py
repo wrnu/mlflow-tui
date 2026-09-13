@@ -93,12 +93,14 @@ class WrappingFooter(_Footer):
         scrollbar-size: 0 0;
     }
     WrappingFooter FooterKey.-command-palette {
-        dock: none;
-        padding-right: 0;
-        border-left: none;
+        display: none;
     }
     """
     _wrap_layout = WrapLayout()
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs.setdefault("show_command_palette", False)
+        super().__init__(*args, **kwargs)
 
     @property
     def layout(self) -> Layout:

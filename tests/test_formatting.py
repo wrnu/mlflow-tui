@@ -259,3 +259,79 @@ def test_line_chart_zoom_uses_the_visible_x_window() -> None:
     assert "0" in chart
     assert "200" in chart
     assert "400" not in chart.splitlines()[-1]
+
+
+def test_line_chart_header_does_not_hide_x_labels() -> None:
+    from rich.cells import cell_len
+
+    from mlflow_tui.formatting import render_line_chart
+
+    chart = render_line_chart(
+        [0.1, 0.2, 0.3, 0.4],
+        width=36,
+        height=10,
+        title="toy-skip-token-eval-n-very-long-metric-name",
+        x0=0,
+        x1=128,
+        x_start=0.0,
+        x_span=0.5,
+        y_start=0.0,
+        y_span=0.5,
+        smooth=True,
+        log_y=True,
+    ).plain
+    lines = chart.splitlines()
+    assert lines
+    assert all(cell_len(line) <= 36 for line in lines)
+    assert any(char.isdigit() for char in lines[-1])
+    assert "0" in lines[-1]
+
+
+def test_ema_matches_first_point_and_tracks_the_mean() -> None:
+    from mlflow_tui.formatting import ema
+
+    flat = ema([2.0, 2.0, 2.0, 2.0])
+    assert flat[0] == 2.0
+    assert all(abs(value - 2.0) < 1e-9 for value in flat)
+    noisy = ema([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], weight=0.8)
+    assert noisy[0] == 0.0
+    assert 0.2 < noisy[-1] < 0.8
+
+
+def test_line_chart_smooth_keeps_raw_and_labels_header() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    values = [1.0 if i % 2 == 0 else 0.0 for i in range(40)]
+    raw = render_line_chart(values, width=48, height=12, title="loss")
+    smoothed = render_line_chart(values, width=48, height=12, title="loss", smooth=True)
+    assert "smooth" in smoothed.plain.splitlines()[0]
+    assert "smooth" not in raw.plain.splitlines()[0]
+    raw_styles = " ".join(str(span.style) for span in raw.spans)
+    smooth_styles = " ".join(str(span.style) for span in smoothed.spans)
+    assert "dim" not in raw_styles
+    assert "dim" in smooth_styles
+    assert "#7ee0ff" in raw_styles
+    assert "#7ee0ff" in smooth_styles
+
+
+def test_line_chart_smooth_keeps_x_labels_without_filling_the_axis() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    values = [8.0 + (i % 9) * 2.5 for i in range(400)]
+    chart = render_line_chart(
+        values,
+        width=48,
+        height=12,
+        title="loss",
+        x0=0,
+        x1=399,
+        smooth=True,
+    )
+    lines = chart.plain.splitlines()
+    assert any(char.isdigit() for char in lines[-1])
+    assert "0" in lines[-1]
+    assert "399" in lines[-1]
+    axis = next(index for index, line in enumerate(lines) if "└" in line)
+    plot_row = lines[axis - 1]
+    filled = sum(1 for char in plot_row if 0x2800 <= ord(char) <= 0x28FF)
+    assert filled < 20

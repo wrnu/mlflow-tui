@@ -5,11 +5,13 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TypeVar
 
+from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 
 T = TypeVar("T")
 
 SPARK_CHARS = "▁▂▃▄▅▆▇█"
+EMA_WEIGHT = 0.8
 
 STATUS_STYLE: dict[str, tuple[str, str, str]] = {
     "RUNNING": ("●", "running", "bold #3ddc97"),
@@ -42,6 +44,23 @@ def downsample(values: Sequence[T], max_points: int) -> list[T]:
     if max_points == 1:
         return [values[-1]]
     return [values[round(i * (n - 1) / (max_points - 1))] for i in range(max_points)]
+
+
+def ema(values: Sequence[float], weight: float = EMA_WEIGHT) -> list[float]:
+    """TensorBoard-style debiased exponential moving average."""
+    if not values:
+        return []
+    if weight <= 0:
+        return [float(v) for v in values]
+    if weight >= 1:
+        return [float(values[0])] * len(values)
+    last = 0.0
+    out: list[float] = []
+    for index, value in enumerate(values, start=1):
+        last = last * weight + (1.0 - weight) * float(value)
+        debias = 1.0 - weight**index
+        out.append(last / debias if debias else last)
+    return out
 
 
 def sparkline(values: Sequence[float], width: int = 24) -> str:
@@ -196,8 +215,10 @@ _BRAILLE = (
     (0x40, 0x80),
 )
 _LINE_STYLE = "#7ee0ff"
+_RAW_STYLE = "dim #3d5563"
 _LAST_STYLE = "bold #3ddc97"
 _AXIS_STYLE = "#6b8796"
+_X_LABEL_STYLE = "#c5d4de"
 _GRID_STYLE = "#243848"
 _TITLE_STYLE = "bold #c5d4de"
 
@@ -435,6 +456,46 @@ def _draw_dots(
             y += sy
 
 
+def _stroke_line(
+    cells: list[int],
+    plot_w: int,
+    plot_h: int,
+    xs: list[float],
+    ys: list[float],
+    x_lo: float,
+    x_hi: float,
+    t_lo: float,
+    t_hi: float,
+    *,
+    mode: str,
+    linthresh: float,
+    envelope: bool = True,
+) -> int:
+    canvas_w = plot_w * 2
+    canvas_h = plot_h * 4
+    if envelope:
+        sampled_x, sampled_y = _minmax_series(xs, ys, canvas_w)
+    else:
+        sampled_x = downsample(xs, canvas_w)
+        sampled_y = downsample(ys, canvas_w)
+    points: list[tuple[int, int]] = []
+    for x_val, y_val in zip(sampled_x, sampled_y, strict=False):
+        px = _scale_free(x_val, x_lo, x_hi, canvas_w)
+        py = (canvas_h - 1) - _scale_free(
+            _axis_y(y_val, mode=mode, linthresh=linthresh), t_lo, t_hi, canvas_h
+        )
+        points.append((px, py))
+    if not points:
+        return -1
+    for i in range(len(points) - 1):
+        _draw_dots(cells, plot_w, plot_h, *points[i], *points[i + 1])
+    last_px, last_py = points[-1]
+    last_col, last_row = last_px // 2, last_py // 4
+    if 0 <= last_row < plot_h and 0 <= last_col < plot_w:
+        return last_row * plot_w + last_col
+    return -1
+
+
 def _minmax_series(
     xs: list[float], ys: list[float], buckets: int
 ) -> tuple[list[float], list[float]]:
@@ -458,11 +519,22 @@ def _minmax_series(
 
 
 def _x_label_line(plot_w: int, labels: list[tuple[float, str]]) -> str:
-    buf = [" "] * plot_w
+    buf = [" "] * max(0, plot_w)
+    if plot_w <= 0:
+        return ""
     used: list[tuple[int, int]] = []
-    for frac, text in labels:
+
+    def priority(frac: float) -> tuple[int, float]:
+        if frac <= 0:
+            return (0, 0.0)
+        if frac >= 1:
+            return (0, 1.0)
+        return (1, abs(frac - 0.5))
+
+    for frac, text in sorted(labels, key=lambda item: priority(item[0])):
         if not text:
             continue
+        text = text[:plot_w]
         if frac <= 0:
             start = 0
         elif frac >= 1:
@@ -470,13 +542,37 @@ def _x_label_line(plot_w: int, labels: list[tuple[float, str]]) -> str:
         else:
             start = int(round(frac * (plot_w - 1) - len(text) / 2))
             start = max(0, min(start, plot_w - len(text)))
-        end = start + len(text)
+        end = min(plot_w, start + len(text))
         if any(start < right and end > left for left, right in used):
             continue
-        for i, char in enumerate(text):
+        for i, char in enumerate(text[: end - start]):
             buf[start + i] = char
         used.append((start, end))
     return "".join(buf)
+
+
+def _clip_cells(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if cell_len(text) <= width:
+        return text
+    if width == 1:
+        return "…"
+    return set_cell_size(text, width - 1) + "…"
+
+
+def _append_header(chart: Text, parts: list[tuple[str, str]], width: int) -> None:
+    used = 0
+    for text, style in parts:
+        remain = width - used
+        if remain <= 0:
+            break
+        piece = _clip_cells(text, remain)
+        if not piece:
+            break
+        chart.append(piece, style=style)
+        used += cell_len(piece)
+    chart.append("\n")
 
 
 def render_line_chart(
@@ -493,6 +589,7 @@ def render_line_chart(
     x_span: float = 1.0,
     y_start: float = 0.0,
     y_span: float = 1.0,
+    smooth: bool = False,
 ) -> Text:
     """Braille line chart: 2×4 dots per cell, ticks on nice numbers, x from real steps."""
     if not values:
@@ -509,13 +606,17 @@ def render_line_chart(
     x_start, x_span = clamp_view(x_start, x_span)
     y_start, y_span = clamp_view(y_start, y_span)
     zoomed = view_is_zoomed(x_span, y_span)
+    trend_y = ema(series_y) if smooth else series_y
     if width < 16 or height < 5:
         head = f"{title}  " if title else ""
         if log_y:
             head = f"{head}{log_mode}  "
-            spark_src = [_axis_y(y, mode=log_mode, linthresh=linthresh) for y in series_y]
+        if smooth:
+            head = f"{head}smooth  "
+        if log_y:
+            spark_src = [_axis_y(y, mode=log_mode, linthresh=linthresh) for y in trend_y]
         else:
-            spark_src = series_y
+            spark_src = trend_y
         return Text(f"{head}{sparkline(spark_src, max(8, width - 2))}", style=_LINE_STYLE)
 
     if log_y:
@@ -554,25 +655,39 @@ def render_line_chart(
     gutter = max(6, min(10, max(len(format_tick(tick)) for tick in (ticks or [0.0]))))
     plot_h = max(4, height - 3)
     plot_w = max(8, width - gutter - 2)
-    canvas_w = plot_w * 2
-    canvas_h = plot_h * 4
 
-    sampled_x, sampled_y = _minmax_series(series_x, series_y, canvas_w)
-    cells = [0] * (plot_h * plot_w)
-    points: list[tuple[int, int]] = []
-    for x_val, y_val in zip(sampled_x, sampled_y, strict=False):
-        px = _scale_free(x_val, x_lo, x_hi, canvas_w)
-        py = (canvas_h - 1) - _scale_free(
-            _axis_y(y_val, mode=log_mode, linthresh=linthresh), t_lo, t_hi, canvas_h
+    raw_cells = [0] * (plot_h * plot_w)
+    last_index = _stroke_line(
+        raw_cells,
+        plot_w,
+        plot_h,
+        series_x,
+        series_y,
+        x_lo,
+        x_hi,
+        t_lo,
+        t_hi,
+        mode=log_mode,
+        linthresh=linthresh,
+        envelope=not smooth,
+    )
+    smooth_cells: list[int] | None = None
+    if smooth:
+        smooth_cells = [0] * (plot_h * plot_w)
+        last_index = _stroke_line(
+            smooth_cells,
+            plot_w,
+            plot_h,
+            series_x,
+            list(trend_y),
+            x_lo,
+            x_hi,
+            t_lo,
+            t_hi,
+            mode=log_mode,
+            linthresh=linthresh,
+            envelope=False,
         )
-        points.append((px, py))
-    for i in range(len(points) - 1):
-        _draw_dots(cells, plot_w, plot_h, *points[i], *points[i + 1])
-    last_px, last_py = points[-1]
-    last_col, last_row = last_px // 2, last_py // 4
-    last_index = -1
-    if 0 <= last_row < plot_h and 0 <= last_col < plot_w:
-        last_index = last_row * plot_w + last_col
 
     tick_rows = {
         (plot_h - 1)
@@ -581,22 +696,20 @@ def render_line_chart(
     }
 
     chart = Text()
+    header_parts: list[tuple[str, str]] = []
     if title:
-        chart.append(f"{title}  ", style=_TITLE_STYLE)
+        header_parts.append((f"{title}  ", _TITLE_STYLE))
+    header_parts.append((f"last {format_value(series_y[-1])}  ", _LAST_STYLE))
+    header_parts.append((f"n={len(series_y)}", _AXIS_STYLE))
     if log_y:
-        chart.append(f"{log_mode}  ", style=_TITLE_STYLE)
+        header_parts.append((f"  {log_mode}", _TITLE_STYLE))
+    if smooth:
+        header_parts.append(("  smooth", _TITLE_STYLE))
     if zoomed:
-        chart.append(
-            f"zoom x {1 / x_span:.1f}×  y {1 / y_span:.1f}×  ",
-            style=_TITLE_STYLE,
-        )
-    chart.append(f"last {format_value(series_y[-1])}", style=_LAST_STYLE)
+        header_parts.append((f"  zoom x {1 / x_span:.1f}×  y {1 / y_span:.1f}×", _TITLE_STYLE))
     lo, hi = min(series_y), max(series_y)
-    chart.append(
-        f"  min {format_value(lo)}  max {format_value(hi)}  n={len(series_y)}",
-        style=_AXIS_STYLE,
-    )
-    chart.append("\n")
+    header_parts.append((f"  min {format_value(lo)}  max {format_value(hi)}", _AXIS_STYLE))
+    _append_header(chart, header_parts, width)
 
     for row in range(plot_h):
         tick = tick_rows.get(row)
@@ -608,10 +721,19 @@ def render_line_chart(
             chart.append(" │", style=_AXIS_STYLE)
         for col in range(plot_w):
             index = row * plot_w + col
-            bits = cells[index]
-            if bits:
+            smooth_bits = smooth_cells[index] if smooth_cells is not None else 0
+            raw_bits = raw_cells[index]
+            if smooth_bits:
                 style = _LAST_STYLE if index == last_index else _LINE_STYLE
-                chart.append(chr(0x2800 + bits), style=style)
+                chart.append(chr(0x2800 + smooth_bits), style=style)
+            elif raw_bits:
+                if smooth:
+                    style = _RAW_STYLE
+                elif index == last_index:
+                    style = _LAST_STYLE
+                else:
+                    style = _LINE_STYLE
+                chart.append(chr(0x2800 + raw_bits), style=style)
             elif tick is not None:
                 chart.append("┈", style=_GRID_STYLE)
             else:
@@ -624,12 +746,18 @@ def render_line_chart(
     chart.append("\n")
     left = x_lo
     right = x_hi
-    mid = (left + right) / 2
-    if abs(left - round(left)) < 1e-9 and abs(right - round(right)) < 1e-9:
-        mid_label = str(int(round(mid)))
+    x_ticks = nice_ticks(x_lo, x_hi, count=3)
+    span = right - left
+    x_labels: list[tuple[float, str]] = []
+    if span == 0:
+        x_labels = [(0.0, _format_x(left)), (1.0, _format_x(right))]
     else:
-        mid_label = _format_x(mid)
-    x_labels = [(0.0, _format_x(left)), (0.5, mid_label), (1.0, _format_x(right))]
+        x_labels.append((0.0, _format_x(left)))
+        for tick in x_ticks:
+            frac = (tick - left) / span
+            if 0.08 < frac < 0.92:
+                x_labels.append((frac, _format_x(tick)))
+        x_labels.append((1.0, _format_x(right)))
     chart.append(" " * (gutter + 2), style=_AXIS_STYLE)
-    chart.append(_x_label_line(plot_w, x_labels), style=_AXIS_STYLE)
+    chart.append(_x_label_line(plot_w, x_labels), style=_X_LABEL_STYLE)
     return chart
