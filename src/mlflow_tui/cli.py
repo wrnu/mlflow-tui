@@ -73,9 +73,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mouse",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Enable mouse reporting. Web/mobile terminals (T3, VS Code) flood "
-        "mouse-move sequences that show up as flashing glyphs; those default off. "
-        "Desktop terminals keep mouse on. Override with --mouse / --no-mouse.",
+        help="Enable mouse reporting (on for a real tty). "
+        "A flood of mouse events is treated as noise and tracking is turned off. "
+        "Override with --mouse / --no-mouse or MLFLOW_TUI_MOUSE.",
     )
     parser.add_argument(
         "--version",
@@ -120,12 +120,14 @@ def main(argv: list[str] | None = None) -> None:
     from mlflow_tui.app import MLFlowTui
 
     prepare_terminal()
+    mouse = should_enable_mouse(args.mouse)
     app = MLFlowTui(
         store=store,
         refresh_seconds=args.refresh,
         initial_experiment=args.experiment,
+        mouse_enabled=mouse,
     )
-    app.run(mouse=should_enable_mouse(args.mouse))
+    app.run(mouse=mouse)
 
 
 if __name__ == "__main__":

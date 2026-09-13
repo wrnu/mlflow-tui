@@ -40,6 +40,7 @@ from mlflow_tui.formatting import (
 from mlflow_tui.marquee import ellipsize, marquee_offset, marquee_slice, sidebar_width
 from mlflow_tui.models import Artifact, Experiment, RunSummary, TrackingError, TrackingStore
 from mlflow_tui.screens.compare import CompareScreen
+from mlflow_tui.terminal import install_quiet_driver, keep_terminal_quiet
 from mlflow_tui.widgets.plot import MetricPlot
 from mlflow_tui.widgets.table import MarqueeDataTable
 
@@ -88,11 +89,13 @@ class MLFlowTui(App[None]):
         *,
         refresh_seconds: float = 3.0,
         initial_experiment: str | None = None,
+        mouse_enabled: bool = True,
     ) -> None:
         super().__init__()
         self.store = store
         self.refresh_seconds = refresh_seconds
         self.initial_experiment = initial_experiment
+        self.mouse_enabled = mouse_enabled
         self.experiments: list[Experiment] = []
         self.runs: list[RunSummary] = []
         self.runs_by_id: dict[str, RunSummary] = {}
@@ -108,7 +111,9 @@ class MLFlowTui(App[None]):
         self._exp_marquee_id: str | None = None
         self._exp_marquee_ticks = 0
         self._mouse_hits: list[float] = []
+        self._key_noise: list[float] = []
         self._mouse_silenced = False
+        self._last_quiet = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -154,7 +159,7 @@ class MLFlowTui(App[None]):
         )
         self.query_one(
             "#plot", MetricPlot
-        ).tooltip = "Click: next metric · wheel: cycle · double-click: focus graph"
+        ).tooltip = "Click: next metric · double-click: focus graph"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
         self.query_one(
             "#runs", DataTable
@@ -162,6 +167,8 @@ class MLFlowTui(App[None]):
         self.query_one(
             "#filter", Input
         ).tooltip = "Substring or MLflow filter, e.g. metrics.loss < 0.1"
+        self._install_quiet_input()
+        self.call_after_refresh(self._install_quiet_input)
         self.reload_experiments()
 
     def watch_focused_view(self, focused: bool) -> None:
@@ -230,9 +237,61 @@ class MLFlowTui(App[None]):
     def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
         self._note_mouse_noise()
 
-    def _note_mouse_noise(self) -> None:
-        if self._mouse_silenced:
+    def on_resize(self, _event: events.Resize) -> None:
+        self._keep_terminal_quiet()
+
+    def on_app_focus(self, _event: events.AppFocus) -> None:
+        self._keep_terminal_quiet()
+
+    def on_app_blur(self, _event: events.AppBlur) -> None:
+        self._keep_terminal_quiet()
+
+    def on_key(self, event: events.Key) -> None:
+        if isinstance(self.focused, Input):
             return
+        if event.key in {
+            "q",
+            "r",
+            "slash",
+            "m",
+            "space",
+            "c",
+            "y",
+            "f",
+            "escape",
+            "tab",
+            "enter",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "backspace",
+            "delete",
+            "shift+tab",
+        }:
+            return
+        character = event.character or ""
+        if not character or not character.isprintable():
+            return
+        event.stop()
+        event.prevent_default()
+        now = monotonic()
+        self._key_noise.append(now)
+        cutoff = now - 0.15
+        self._key_noise = [stamp for stamp in self._key_noise if stamp >= cutoff]
+        if len(self._key_noise) >= 8:
+            self._keep_terminal_quiet()
+
+    def on_paste(self, event: events.Paste) -> None:
+        if not isinstance(self.focused, Input):
+            event.stop()
+            event.prevent_default()
+
+    def _note_mouse_noise(self) -> None:
         now = monotonic()
         self._mouse_hits.append(now)
         cutoff = now - 0.15
@@ -241,15 +300,23 @@ class MLFlowTui(App[None]):
             self._disable_mouse_tracking()
 
     def _disable_mouse_tracking(self) -> None:
-        if self._mouse_silenced:
-            return
         self._mouse_silenced = True
+        self._keep_terminal_quiet(force=True)
+
+    def _allow_mouse(self) -> bool:
+        return self.mouse_enabled and not self._mouse_silenced
+
+    def _install_quiet_input(self) -> None:
         driver = getattr(self, "_driver", None)
-        disable = getattr(driver, "_disable_mouse_support", None)
-        if callable(disable):
-            disable()
-        if driver is not None:
-            driver._mouse = False
+        install_quiet_driver(driver, allow_mouse=self._allow_mouse)
+        self._keep_terminal_quiet(force=True)
+
+    def _keep_terminal_quiet(self, *, force: bool = False) -> None:
+        now = monotonic()
+        if not force and now - self._last_quiet < 0.08:
+            return
+        self._last_quiet = now
+        keep_terminal_quiet(getattr(self, "_driver", None), allow_mouse=self._allow_mouse())
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id != "experiments" or self.focused_view:

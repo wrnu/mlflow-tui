@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import DataTable, OptionList
+from textual.events import Paste
+from textual.widgets import DataTable, Input, OptionList
 
 from mlflow_tui.app import MLFlowTui
 from mlflow_tui.demo import DemoTrackingStore
@@ -90,5 +91,45 @@ def test_mouse_can_mark_run_without_keyboard_focus() -> None:
             await pilot.click("#runs", offset=(8, 2), control=True)
             await pilot.pause()
             assert app.marked_run_ids
+
+    asyncio.run(_run())
+
+
+def test_unfocused_paste_does_not_enter_filter() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test() as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.experiments:
+                    break
+            filt = app.query_one("#filter", Input)
+            assert not filt.has_focus
+            app.post_message(Paste("hello-from-paste"))
+            await pilot.pause()
+            assert filt.value == ""
+
+    asyncio.run(_run())
+
+
+def test_unfocused_printable_keys_do_not_enter_filter() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test() as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.experiments:
+                    break
+            filt = app.query_one("#filter", Input)
+            assert not filt.has_focus
+            await pilot.press("h", "e", "l", "l", "o")
+            await pilot.pause()
+            assert filt.value == ""
+            filt.focus()
+            await pilot.press("h", "e", "l", "l", "o")
+            await pilot.pause()
+            assert filt.value == "hello"
 
     asyncio.run(_run())

@@ -96,7 +96,7 @@ Basic auth takes precedence when a username is set. `~/.mlflow/credentials` is a
 uv run mlflow-tui --tracking-uri https://mlflow.example --username warren --password 'secret'
 ```
 
-On a phone or VS Code/T3 web terminal, mouse reporting is off by default (`--mouse` to force it on). Touch scrolling is ignored so it does not dump escape sequences into the UI.
+Mouse reporting is on for a real tty (`--no-mouse` or `MLFLOW_TUI_MOUSE=0` to force it off). If the terminal floods mouse or resize sequences into the UI, tracking is turned off and paste/typing only go to the filter field when that field is focused.
 
 ### 403 Forbidden
 

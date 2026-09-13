@@ -29,6 +29,8 @@ class MetricPlot(Static):
         self._ys: list[float] = []
         self._press: tuple[int, int] | None = None
         self._last_size: tuple[int, int] | None = None
+        self._queued_size: tuple[int, int] | None = None
+        self._resize_timer = None
 
     def clear_series(self) -> None:
         self._name = ""
@@ -43,6 +45,15 @@ class MetricPlot(Static):
         self._render_plot()
 
     def on_resize(self) -> None:
+        size = (self.size.width, self.size.height)
+        if size == self._queued_size:
+            return
+        self._queued_size = size
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(0.12, self._apply_resize)
+
+    def _apply_resize(self) -> None:
         size = (self.size.width, self.size.height)
         if size == self._last_size:
             return
