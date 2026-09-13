@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from rich.text import Text
 
 from mlflow_tui.formatting import (
@@ -160,3 +162,59 @@ def test_line_chart_maps_x_from_steps() -> None:
         "39.5"
         not in render_line_chart([0.0] * 80, width=52, height=12, title="spike", x0=0, x1=79).plain
     )
+
+
+def test_nice_log_ticks_use_1_2_5() -> None:
+    from mlflow_tui.formatting import nice_log_ticks
+
+    ticks = nice_log_ticks(0.001, 1.0, count=5)
+    assert ticks == sorted(ticks)
+    assert all(tick > 0 for tick in ticks)
+    for tick in ticks:
+        exponent = math.floor(math.log10(tick))
+        mantissa = tick / (10**exponent)
+        assert any(abs(mantissa - coef) < 1e-6 for coef in (1.0, 2.0, 5.0))
+    decades = nice_log_ticks(1e-8, 1e8, count=5)
+    assert all(abs(math.log10(tick) - round(math.log10(tick))) < 1e-9 for tick in decades)
+
+
+def test_line_chart_log_y_uses_symlog_for_signed_values() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    positive = render_line_chart(
+        [0.001, 0.01, 0.1, 1.0],
+        width=48,
+        height=12,
+        title="loss",
+        log_y=True,
+    ).plain
+    assert "loss" in positive
+    assert "log" in positive.splitlines()[0]
+    assert "symlog" not in positive.splitlines()[0]
+
+    signed = render_line_chart(
+        [-2.0, -0.2, 0.0, 0.2, 2.0],
+        width=48,
+        height=12,
+        title="delta",
+        log_y=True,
+    ).plain
+    assert "symlog" in signed.splitlines()[0]
+    assert any("\u2800" <= char <= "\u28ff" for char in signed)
+    assert "0" in signed
+    assert "n=5" in signed
+
+
+def test_line_chart_log_y_plots_all_negative_series() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    chart = render_line_chart(
+        [-8.0, -2.0, -0.5, -0.1],
+        width=48,
+        height=12,
+        title="reward",
+        log_y=True,
+    ).plain
+    assert "symlog" in chart.splitlines()[0]
+    assert any("\u2800" <= char <= "\u28ff" for char in chart)
+    assert "n=4" in chart

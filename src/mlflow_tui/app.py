@@ -9,10 +9,10 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
-    Footer,
     Header,
     Input,
     Label,
@@ -41,7 +41,8 @@ from mlflow_tui.formatting import (
 from mlflow_tui.marquee import ellipsize, marquee_offset, marquee_slice, sidebar_width
 from mlflow_tui.models import Artifact, Experiment, RunSummary, TrackingError, TrackingStore
 from mlflow_tui.screens.compare import CompareScreen
-from mlflow_tui.terminal import install_quiet_driver, keep_terminal_quiet
+from mlflow_tui.terminal import install_quiet_driver, keep_probes_off, keep_terminal_quiet
+from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.plot import MetricPlot
 from mlflow_tui.widgets.table import MarqueeDataTable
 
@@ -58,6 +59,13 @@ class RunsTable(MarqueeDataTable):
     """Runs list: tap/click selects; ctrl-click or double-click marks for compare."""
 
     marquee_columns = {"name"}
+
+    def _scroll_cursor_into_view(self, animate: bool = False) -> None:
+        super()._scroll_cursor_into_view(animate=False)
+
+    def watch_cursor_coordinate(self, old_value, cursor_coordinate) -> None:
+        super().watch_cursor_coordinate(old_value, cursor_coordinate)
+        self.refresh(repaint=True)
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
         await super()._on_mouse_down(event)
@@ -108,6 +116,7 @@ class MLFlowTui(App[None]):
         Binding("r", "refresh", "Refresh"),
         Binding("slash", "focus_filter", "Filter"),
         Binding("m", "next_metric", "Metric"),
+        Binding("l", "toggle_log_scale", "Log"),
         Binding("space", "toggle_mark", "Mark"),
         Binding("c", "compare", "Compare"),
         Binding("y", "copy_run_id", "Yank ID"),
@@ -146,9 +155,11 @@ class MLFlowTui(App[None]):
         self._key_noise: list[float] = []
         self._last_quiet = 0.0
         self._last_repair = 0.0
+        self._resize_repair_timer = None
+        self._detail_timer = None
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header()
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
                 yield Label("Experiments", classes="pane-title", id="experiments-title")
@@ -170,7 +181,7 @@ class MLFlowTui(App[None]):
                             yield MarqueeDataTable(id="tags", cursor_type="row", zebra_stripes=True)
                         with TabPane("Artifacts", id="tab-artifacts"):
                             yield Tree("artifacts", id="artifacts")
-        yield Footer()
+        yield WrappingFooter()
 
     def on_mount(self) -> None:
         self.sub_title = self.store.tracking_uri
@@ -185,13 +196,14 @@ class MLFlowTui(App[None]):
         if self.refresh_seconds > 0:
             self.set_interval(self.refresh_seconds, self.silent_refresh)
         self.set_interval(0.14, self._tick_experiment_marquee)
+        self.set_interval(2.0, self._keep_probes_quiet)
         self.query_one("#experiments", OptionList).focus()
         self.query_one("#experiments", OptionList).add_option(
             Option("Loading experiments…", id="__loading", disabled=True)
         )
         self.query_one(
             "#plot", MetricPlot
-        ).tooltip = "Click: next metric · double-click: focus graph"
+        ).tooltip = "Click: next metric · double-click: focus graph · l: log y (symlog if ≤0)"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
         self.query_one(
             "#runs", DataTable
@@ -261,13 +273,20 @@ class MLFlowTui(App[None]):
             self.action_next_metric()
 
     def on_resize(self, _event: events.Resize) -> None:
-        self._keep_terminal_quiet()
+        keep_probes_off(getattr(self, "_driver", None))
+        timer = getattr(self, "_resize_repair_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._resize_repair_timer = self.set_timer(0.2, self._repair_after_resize)
+
+    def _repair_after_resize(self) -> None:
+        self.refresh(repaint=True, layout=True)
 
     def on_app_focus(self, _event: events.AppFocus) -> None:
-        self._keep_terminal_quiet()
+        keep_probes_off(getattr(self, "_driver", None))
 
     def on_app_blur(self, _event: events.AppBlur) -> None:
-        self._keep_terminal_quiet()
+        keep_probes_off(getattr(self, "_driver", None))
 
     def on_key(self, event: events.Key) -> None:
         if isinstance(self.focused, Input):
@@ -277,6 +296,7 @@ class MLFlowTui(App[None]):
             "r",
             "slash",
             "m",
+            "l",
             "space",
             "c",
             "y",
@@ -323,6 +343,19 @@ class MLFlowTui(App[None]):
         install_quiet_driver(driver, allow_mouse=self._allow_mouse)
         self._keep_terminal_quiet(force=True)
 
+    def _build_driver(
+        self, headless: bool, inline: bool, mouse: bool, size: tuple[int, int] | None
+    ):
+        driver = super()._build_driver(headless=headless, inline=inline, mouse=mouse, size=size)
+        install_quiet_driver(driver, allow_mouse=self._allow_mouse)
+        return driver
+
+    def _on_terminal_supports_synchronized_output(self, _message: object) -> None:
+        return
+
+    def _keep_probes_quiet(self) -> None:
+        keep_probes_off(getattr(self, "_driver", None))
+
     def _keep_terminal_quiet(self, *, force: bool = False) -> None:
         now = monotonic()
         if not force and now - self._last_quiet < 0.08:
@@ -360,7 +393,10 @@ class MLFlowTui(App[None]):
         if run_id == self.selected_run_id:
             return
         self.selected_run_id = run_id
-        self.load_run_detail(run_id)
+        timer = getattr(self, "_detail_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._detail_timer = self.set_timer(0.18, lambda: self.load_run_detail(run_id))
 
     def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
         node = event.node
@@ -394,6 +430,10 @@ class MLFlowTui(App[None]):
             return
         self.copy_to_clipboard(self.selected_run_id)
         self.notify(f"Copied {self.selected_run_id}")
+
+    def action_toggle_log_scale(self) -> None:
+        plot = self.query_one("#plot", MetricPlot)
+        plot.toggle_log_y()
 
     def action_next_metric(self) -> None:
         self._cycle_metric(1)
@@ -576,6 +616,8 @@ class MLFlowTui(App[None]):
                 pass
 
     def load_run_detail(self, run_id: str) -> None:
+        if run_id != self.selected_run_id:
+            return
         run = self.runs_by_id.get(run_id)
         if not run:
             return
@@ -703,7 +745,10 @@ class MLFlowTui(App[None]):
         return max(4, opts.size.width - 4)
 
     def _tick_experiment_marquee(self) -> None:
-        opts = self.query_one("#experiments", OptionList)
+        try:
+            opts = self.query_one("#experiments", OptionList)
+        except NoMatches:
+            return
         highlighted = opts.highlighted
         if highlighted is None:
             return

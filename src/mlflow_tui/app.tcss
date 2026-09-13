@@ -10,6 +10,8 @@ Header {
 
 Footer {
     background: #102230;
+    height: auto;
+    min-height: 1;
 }
 
 #body {
@@ -66,15 +68,17 @@ Footer {
 
 #main {
     width: 1fr;
+    height: 1fr;
 }
 
 #runs {
     height: 1fr;
+    min-height: 8;
 }
 
 #detail {
     height: 1fr;
-    min-height: 14;
+    min-height: 8;
     border-top: tall #1c2c3a;
 }
 

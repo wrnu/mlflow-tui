@@ -31,6 +31,7 @@ class MetricPlot(Static):
         self._last_size: tuple[int, int] | None = None
         self._queued_size: tuple[int, int] | None = None
         self._resize_timer = None
+        self.log_y = False
 
     def clear_series(self) -> None:
         self._name = ""
@@ -42,6 +43,10 @@ class MetricPlot(Static):
         self._name = name
         self._steps = [point.step for point in points]
         self._ys = [point.value for point in points]
+        self._render_plot()
+
+    def toggle_log_y(self) -> None:
+        self.log_y = not self.log_y
         self._render_plot()
 
     def on_resize(self) -> None:
@@ -95,5 +100,6 @@ class MetricPlot(Static):
             title=self._name,
             x0=self._steps[0] if self._steps else 0,
             x1=self._steps[-1] if self._steps else 0,
+            log_y=self.log_y,
         )
         self.update(chart)

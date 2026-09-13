@@ -220,6 +220,50 @@ def _format_x(value: float) -> str:
     return format_tick(value)
 
 
+def nice_log_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
+    """Log-axis ticks on 1/2/5 × 10^n (decades only when the span is wide)."""
+    if not math.isfinite(lo) or not math.isfinite(hi) or lo <= 0 or hi <= 0:
+        return [1.0]
+    if hi < lo:
+        lo, hi = hi, lo
+    if hi == lo:
+        return [lo]
+    exp_min = math.floor(math.log10(lo))
+    exp_max = math.ceil(math.log10(hi))
+    ticks: list[float] = []
+    for exp in range(exp_min, exp_max + 1):
+        for coef in (1.0, 2.0, 5.0):
+            tick = coef * (10**exp)
+            if lo <= tick <= hi:
+                ticks.append(tick)
+    if len(ticks) > max(count, 6):
+        decades = [tick for tick in ticks if abs(math.log10(tick) - round(math.log10(tick))) < 1e-9]
+        if len(decades) >= 2:
+            ticks = decades
+    return ticks or [lo, hi]
+
+
+def nice_symlog_ticks(lo: float, hi: float, linthresh: float, count: int = 5) -> list[float]:
+    """Symlog ticks: 0, ±1/2/5 × 10^n, matching Matplotlib's signed log axis."""
+    if hi < lo:
+        lo, hi = hi, lo
+    ticks: list[float] = []
+    if lo <= 0 <= hi:
+        ticks.append(0.0)
+    thresh = max(abs(linthresh), 1e-300)
+    max_abs = max(abs(lo), abs(hi), thresh)
+    for tick in nice_log_ticks(thresh, max_abs, count):
+        if lo <= tick <= hi:
+            ticks.append(tick)
+        if lo <= -tick <= hi:
+            ticks.append(-tick)
+    uniq: list[float] = []
+    for tick in sorted(ticks):
+        if not uniq or abs(tick - uniq[-1]) > max(1e-12, abs(tick) * 1e-9):
+            uniq.append(tick)
+    return uniq or [lo, hi]
+
+
 def nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
     """Axis ticks on 1/2/5 × 10^n so labels match the data instead of row interpolation."""
     if not math.isfinite(lo) or not math.isfinite(hi):
@@ -256,6 +300,58 @@ def _padded_bounds(lo: float, hi: float, pad: float = 0.06) -> tuple[float, floa
         return lo - delta, hi + delta
     span = hi - lo
     return lo - span * pad, hi + span * pad
+
+
+def _auto_linthresh(values: Sequence[float]) -> float:
+    abs_nz = [abs(value) for value in values if value != 0 and math.isfinite(value)]
+    if not abs_nz:
+        return 1.0
+    return max(min(abs_nz), 1e-12)
+
+
+def _symlog(value: float, linthresh: float, *, base: float = 10.0, linscale: float = 1.0) -> float:
+    """Matplotlib SymmetricalLogTransform: log |y|, linear in (-linthresh, linthresh)."""
+    if not math.isfinite(value):
+        return 0.0
+    thresh = max(abs(linthresh), 1e-300)
+    linscale_adj = linscale / (1.0 - base**-1)
+    if abs(value) <= thresh:
+        return value * linscale_adj
+    return math.copysign(
+        thresh * (linscale_adj + math.log(abs(value) / thresh) / math.log(base)),
+        value,
+    )
+
+
+def _y_log_mode(values: Sequence[float]) -> str:
+    if all(value > 0 for value in values):
+        return "log"
+    return "symlog"
+
+
+def _axis_y(value: float, *, mode: str, linthresh: float) -> float:
+    if mode == "log":
+        return math.log10(value) if value > 0 else 0.0
+    if mode == "symlog":
+        return _symlog(value, linthresh)
+    return value
+
+
+def _padded_axis_bounds(
+    lo: float, hi: float, *, mode: str, linthresh: float, pad: float = 0.06
+) -> tuple[float, float]:
+    t_lo = _axis_y(lo, mode=mode, linthresh=linthresh)
+    t_hi = _axis_y(hi, mode=mode, linthresh=linthresh)
+    if t_hi < t_lo:
+        t_lo, t_hi = t_hi, t_lo
+    if t_hi == t_lo:
+        t_lo -= 0.5
+        t_hi += 0.5
+    else:
+        span = t_hi - t_lo
+        t_lo -= span * pad
+        t_hi += span * pad
+    return t_lo, t_hi
 
 
 def _scale(value: float, lo: float, hi: float, size: int) -> int:
@@ -350,6 +446,7 @@ def render_line_chart(
     x0: int | None = None,
     x1: int | None = None,
     xs: Sequence[float] | None = None,
+    log_y: bool = False,
 ) -> Text:
     """Braille line chart: 2×4 dots per cell, ticks on nice numbers, x from real steps."""
     if not values:
@@ -361,19 +458,40 @@ def render_line_chart(
         series_x = [float(v) for v in xs]
         if len(series_x) != len(series_y):
             series_x = [float(i) for i in range(len(series_y))]
+    log_mode = _y_log_mode(series_y) if log_y else "linear"
+    linthresh = _auto_linthresh(series_y) if log_mode == "symlog" else 1.0
     if width < 16 or height < 5:
         head = f"{title}  " if title else ""
-        return Text(f"{head}{sparkline(series_y, max(8, width - 2))}", style=_LINE_STYLE)
+        if log_y:
+            head = f"{head}{log_mode}  "
+            spark_src = [_axis_y(y, mode=log_mode, linthresh=linthresh) for y in series_y]
+        else:
+            spark_src = series_y
+        return Text(f"{head}{sparkline(spark_src, max(8, width - 2))}", style=_LINE_STYLE)
 
-    y_lo, y_hi = _padded_bounds(min(series_y), max(series_y))
+    if log_y:
+        t_lo, t_hi = _padded_axis_bounds(
+            min(series_y), max(series_y), mode=log_mode, linthresh=linthresh
+        )
+        if log_mode == "log":
+            ticks = nice_log_ticks(10**t_lo, 10**t_hi, count=min(6, max(3, height // 3)))
+        else:
+            ticks = nice_symlog_ticks(
+                min(series_y),
+                max(series_y),
+                linthresh,
+                count=min(6, max(3, height // 3)),
+            )
+    else:
+        t_lo, t_hi = _padded_bounds(min(series_y), max(series_y))
+        ticks = nice_ticks(t_lo, t_hi, count=min(6, max(3, height // 3)))
     x_lo = float(x0) if x0 is not None else series_x[0]
     x_hi = float(x1) if x1 is not None else series_x[-1]
     if x_hi == x_lo:
         x_lo -= 1
         x_hi += 1
 
-    ticks = nice_ticks(y_lo, y_hi, count=min(6, max(3, height // 3)))
-    gutter = max(6, min(10, max(len(format_tick(tick)) for tick in [*ticks, y_lo, y_hi])))
+    gutter = max(6, min(10, max(len(format_tick(tick)) for tick in (ticks or [0.0]))))
     plot_h = max(4, height - 3)
     plot_w = max(8, width - gutter - 2)
     canvas_w = plot_w * 2
@@ -384,7 +502,9 @@ def render_line_chart(
     points: list[tuple[int, int]] = []
     for x_val, y_val in zip(sampled_x, sampled_y, strict=False):
         px = _scale(x_val, x_lo, x_hi, canvas_w)
-        py = (canvas_h - 1) - _scale(y_val, y_lo, y_hi, canvas_h)
+        py = (canvas_h - 1) - _scale(
+            _axis_y(y_val, mode=log_mode, linthresh=linthresh), t_lo, t_hi, canvas_h
+        )
         points.append((px, py))
     for i in range(len(points) - 1):
         _draw_dots(cells, plot_w, plot_h, *points[i], *points[i + 1])
@@ -394,11 +514,17 @@ def render_line_chart(
     if 0 <= last_row < plot_h and 0 <= last_col < plot_w:
         last_index = last_row * plot_w + last_col
 
-    tick_rows = {(plot_h - 1) - _scale(tick, y_lo, y_hi, plot_h): tick for tick in ticks}
+    tick_rows = {
+        (plot_h - 1)
+        - _scale(_axis_y(tick, mode=log_mode, linthresh=linthresh), t_lo, t_hi, plot_h): tick
+        for tick in ticks
+    }
 
     chart = Text()
     if title:
         chart.append(f"{title}  ", style=_TITLE_STYLE)
+    if log_y:
+        chart.append(f"{log_mode}  ", style=_TITLE_STYLE)
     chart.append(f"last {format_value(series_y[-1])}", style=_LAST_STYLE)
     lo, hi = min(series_y), max(series_y)
     chart.append(

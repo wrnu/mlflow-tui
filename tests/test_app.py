@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+from rich.text import Text
 from textual.events import Paste
 from textual.widgets import DataTable, Input, OptionList
 
 from mlflow_tui.app import MLFlowTui
 from mlflow_tui.demo import DemoTrackingStore
+from mlflow_tui.widgets.footer import WrappingFooter
+from mlflow_tui.widgets.plot import MetricPlot
 
 
 def test_demo_app_mounts_core_widgets() -> None:
@@ -24,6 +27,21 @@ def test_demo_app_mounts_core_widgets() -> None:
             assert app.query_one("#runs", DataTable).row_count >= 3
             assert app.selected_run_id == "0042"
             assert app.query_one("#sidebar").size.width <= 22
+
+    asyncio.run(_run())
+
+
+def test_runs_table_keeps_a_usable_height_when_short() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(80, 22)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            runs = app.query_one("#runs", DataTable)
+            assert runs.size.height >= 8
 
     asyncio.run(_run())
 
@@ -51,6 +69,33 @@ def test_graph_focus_hides_chrome_and_restores() -> None:
             assert not app.focused_view
             assert sidebar.display
             assert runs.display
+
+    asyncio.run(_run())
+
+
+def test_runs_arrow_keys_keep_rows_and_move_cursor() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs and app.selected_run_id:
+                    break
+            table = app.query_one("#runs", DataTable)
+            table.focus()
+            await pilot.pause()
+            count = table.row_count
+            first = table.cursor_row
+            assert count >= 2
+            await pilot.press("down")
+            await pilot.pause()
+            assert table.row_count == count
+            assert table.cursor_row != first
+            await pilot.press("up")
+            await pilot.pause()
+            assert table.row_count == count
+            assert table.cursor_row == first
 
     asyncio.run(_run())
 
@@ -149,5 +194,51 @@ def test_unfocused_printable_keys_do_not_enter_filter() -> None:
             await pilot.press("h", "e", "l", "l", "o")
             await pilot.pause()
             assert filt.value == "hello"
+
+    asyncio.run(_run())
+
+
+def test_l_toggles_log_scale_on_plot() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            plot = app.query_one("#plot", MetricPlot)
+            for _ in range(40):
+                await pilot.pause()
+                if plot._ys:
+                    break
+            assert not plot.log_y
+            await pilot.press("l")
+            await pilot.pause()
+            assert plot.log_y
+            rendered = plot.render()
+            plain = rendered.plain if isinstance(rendered, Text) else str(rendered)
+            assert "log" in plain
+            await pilot.press("l")
+            await pilot.pause()
+            assert not plot.log_y
+
+    asyncio.run(_run())
+
+
+def test_footer_wraps_to_multiple_rows_when_narrow() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            footer = app.query_one(WrappingFooter)
+            for _ in range(40):
+                await pilot.pause()
+                if footer.size.width > 0:
+                    break
+            assert footer.size.height == 1
+            await pilot.resize_terminal(36, 24)
+            for _ in range(40):
+                await pilot.pause()
+                if footer.size.height >= 2:
+                    break
+            assert footer.size.height >= 2
+            assert len(footer.query("FooterKey")) >= 8
 
     asyncio.run(_run())

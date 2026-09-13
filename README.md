@@ -96,7 +96,7 @@ Basic auth takes precedence when a username is set. `~/.mlflow/credentials` is a
 uv run mlflow-tui --tracking-uri https://mlflow.example --username warren --password 'secret'
 ```
 
-Mouse and touch are on by default (`--no-mouse` to force them off). The UI uses 256-color instead of truecolor so broken terminals cannot dump `38;2;…` codes into the header. On hosts that swallow taps (for example a phone terminal pane), use the keyboard: arrows, `/`, `m`, `f`.
+Mouse and touch are on by default (`--no-mouse` to force them off). The UI hides the hardware cursor and repaints the full screen so incomplete PTYs cannot dump cursor-addressing codes into the header or desync the runs list. On hosts that swallow taps (for example a phone terminal pane), use the keyboard: arrows, `/`, `m`, `f`.
 
 ### 403 Forbidden
 
@@ -115,6 +115,7 @@ A 403 after you have already passed a username and password is often **not** a b
 | `/` | Filter experiments and runs |
 | `r` | Refresh |
 | `m` | Cycle the plotted metric |
+| `l` | Toggle log Y (symlog when the series includes 0 or negatives) |
 | `space` | Mark a run |
 | `c` | Compare marked runs |
 | `y` | Copy the selected run ID |

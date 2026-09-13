@@ -5,11 +5,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Label
+from textual.widgets import Label
 
 from mlflow_tui.formatting import format_value
 from mlflow_tui.marquee import ellipsize
 from mlflow_tui.models import RunSummary
+from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.table import MarqueeDataTable
 
 
@@ -51,7 +52,7 @@ class CompareScreen(ModalScreen[None]):
             names = ", ".join(run.name for run in self.runs)
             yield Label(f"Compare  {names}", id="compare-title")
             yield MarqueeDataTable(id="compare", cursor_type="row", zebra_stripes=True)
-            yield Footer()
+            yield WrappingFooter()
 
     def on_mount(self) -> None:
         table = self.query_one("#compare", MarqueeDataTable)
