@@ -1,0 +1,55 @@
+[project]
+name = "mlflow-tui"
+version = "0.1.0"
+description = "A terminal UI for MLflow tracking — browse experiments, inspect runs, and watch live metrics."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Warren Uniewski", email = "warren@autimo.com" }
+]
+requires-python = ">=3.10"
+keywords = ["mlflow", "tui", "terminal", "experiment-tracking", "textual"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mlflow-skinny>=2.14",
+    "textual>=2.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/wrnu/mlflow-tui"
+Repository = "https://github.com/wrnu/mlflow-tui"
+Issues = "https://github.com/wrnu/mlflow-tui/issues"
+
+[project.scripts]
+mlflow-tui = "mlflow_tui.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

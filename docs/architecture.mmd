@@ -1,0 +1,12 @@
+flowchart LR
+  subgraph Backends
+    File["Local file store"]
+    Server["Tracking server"]
+  end
+
+  TUI["mlflow-tui"]
+  API["MlflowClient / REST"]
+
+  File --> API
+  Server --> API
+  API --> TUI
