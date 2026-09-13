@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
     Footer,
@@ -39,6 +40,26 @@ from mlflow_tui.screens.compare import CompareScreen
 from mlflow_tui.widgets.plot import MetricPlot
 
 
+def _option_experiment_id(option_id: str | None) -> str | None:
+    if not option_id or option_id.startswith("__"):
+        return None
+    if option_id.startswith("exp:"):
+        return option_id[4:] or None
+    return option_id
+
+
+class RunsTable(DataTable):
+    """Runs list: ctrl-click or double-click marks a run for compare."""
+
+    async def _on_click(self, event: events.Click) -> None:
+        await super()._on_click(event)
+        if event.ctrl or event.chain >= 2:
+            action_name = "action_toggle_mark"
+            toggle = getattr(self.app, action_name, None)
+            if callable(toggle):
+                toggle()
+
+
 class MLFlowTui(App[None]):
     TITLE = "mlflow-tui"
     CSS_PATH = "app.tcss"
@@ -50,7 +71,10 @@ class MLFlowTui(App[None]):
         Binding("space", "toggle_mark", "Mark"),
         Binding("c", "compare", "Compare"),
         Binding("y", "copy_run_id", "Yank ID"),
+        Binding("f", "toggle_graph_focus", "Focus"),
+        Binding("escape", "exit_graph_focus", "Back", show=False),
     ]
+    focused_view: reactive[bool] = reactive(False, init=False)
 
     def __init__(
         self,
@@ -72,6 +96,7 @@ class MLFlowTui(App[None]):
         self.metric_keys: list[str] = []
         self.plot_metric: str | None = None
         self._runs_seq = 0
+        self._exp_seq = 0
         self._detail_seq = 0
         self._error: str | None = None
 
@@ -79,12 +104,12 @@ class MLFlowTui(App[None]):
         yield Header(show_clock=True)
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
-                yield Label("Experiments", classes="pane-title")
+                yield Label("Experiments", classes="pane-title", id="experiments-title")
                 yield Input(placeholder="Filter…  /  or metrics.loss < 0.1", id="filter")
                 yield OptionList(id="experiments")
             with Vertical(id="main"):
                 yield Label("Runs", classes="pane-title", id="runs-title")
-                yield DataTable(id="runs", cursor_type="row", zebra_stripes=True)
+                yield RunsTable(id="runs", cursor_type="row", zebra_stripes=True)
                 with Horizontal(id="detail"):
                     with Vertical(id="plot-pane"):
                         yield Label("Select a run", id="run-meta")
@@ -108,9 +133,44 @@ class MLFlowTui(App[None]):
             table.add_columns("Key", "Value")
         if self.refresh_seconds > 0:
             self.set_interval(self.refresh_seconds, self.silent_refresh)
+        self.query_one("#experiments", OptionList).focus()
+        self.query_one("#experiments", OptionList).add_option(
+            Option("Loading experiments…", id="__loading", disabled=True)
+        )
+        self.query_one("#plot", MetricPlot).tooltip = (
+            "Click: next metric · wheel: cycle · double-click: focus graph"
+        )
+        self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
+        self.query_one("#runs", DataTable).tooltip = (
+            "Click to select · ctrl-click or double-click to mark"
+        )
         self.reload_experiments()
 
+    def watch_focused_view(self, focused: bool) -> None:
+        self.screen.set_class(focused, "graph-focus")
+        plot = self.query_one("#plot", MetricPlot)
+        if focused:
+            plot.focus()
+        else:
+            self.query_one("#runs", DataTable).focus()
+        self.call_after_refresh(plot._render_plot)
+
+    def action_toggle_graph_focus(self) -> None:
+        if not self.focused_view and not self.selected_run_id:
+            self.notify("Select a run first")
+            return
+        self.focused_view = not self.focused_view
+
+    def action_exit_graph_focus(self) -> None:
+        if self.focused_view:
+            self.focused_view = False
+            return
+        if isinstance(self.focused, Input):
+            self.query_one("#runs", DataTable).focus()
+
     def action_focus_filter(self) -> None:
+        if self.focused_view:
+            return
         self.query_one("#filter", Input).focus()
 
     def action_refresh(self) -> None:
@@ -134,13 +194,28 @@ class MLFlowTui(App[None]):
         if event.input.id == "filter":
             self.query_one("#runs", DataTable).focus()
 
+    def on_click(self, event: events.Click) -> None:
+        widget_id = getattr(event.widget, "id", None)
+        if widget_id == "experiments-title":
+            self.query_one("#experiments", OptionList).focus()
+        elif widget_id == "runs-title":
+            self.query_one("#runs", DataTable).focus()
+        elif widget_id == "run-meta":
+            self.action_next_metric()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "experiments" or self.focused_view:
+            return
+        self.query_one("#runs", DataTable).focus()
+
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id != "experiments":
             return
         option_id = getattr(event, "option_id", None) or getattr(event.option, "id", None)
-        if not option_id or option_id == self.selected_experiment_id:
+        experiment_id = _option_experiment_id(option_id)
+        if not experiment_id or experiment_id == self.selected_experiment_id:
             return
-        self.selected_experiment_id = str(option_id)
+        self.selected_experiment_id = experiment_id
         self.selected_run_id = None
         self.reload_runs(self.selected_experiment_id)
 
@@ -163,8 +238,6 @@ class MLFlowTui(App[None]):
         self.load_artifacts(self.selected_run_id, data.path, node)
 
     def action_toggle_mark(self) -> None:
-        if not isinstance(self.focused, DataTable) or self.focused.id != "runs":
-            return
         if not self.selected_run_id:
             return
         if self.selected_run_id in self.marked_run_ids:
@@ -178,7 +251,9 @@ class MLFlowTui(App[None]):
             self.runs_by_id[run_id] for run_id in self.marked_run_ids if run_id in self.runs_by_id
         ]
         if len(runs) < 2:
-            self.notify("Mark at least two runs with space, then press c")
+            self.notify(
+                "Mark at least two runs (space, ctrl-click, or double-click), then compare"
+            )
             return
         self.push_screen(CompareScreen(runs))
 
@@ -189,11 +264,17 @@ class MLFlowTui(App[None]):
         self.notify(f"Copied {self.selected_run_id}")
 
     def action_next_metric(self) -> None:
+        self._cycle_metric(1)
+
+    def action_prev_metric(self) -> None:
+        self._cycle_metric(-1)
+
+    def _cycle_metric(self, delta: int) -> None:
         if not self.metric_keys:
             self.notify("No metrics on the selected run")
             return
         if self.plot_metric in self.metric_keys:
-            index = (self.metric_keys.index(self.plot_metric) + 1) % len(self.metric_keys)
+            index = (self.metric_keys.index(self.plot_metric) + delta) % len(self.metric_keys)
         else:
             index = 0
         self.plot_metric = self.metric_keys[index]
@@ -202,20 +283,22 @@ class MLFlowTui(App[None]):
         self.notify(f"Plotting {self.plot_metric}")
 
     def reload_experiments(self, *, silent: bool = False) -> None:
-        self.load_experiments(silent)
+        self._exp_seq += 1
+        self.load_experiments(self._exp_seq, silent)
 
     @work(thread=True, exclusive=True, group="experiments")
-    def load_experiments(self, silent: bool = False) -> None:
+    def load_experiments(self, seq: int, silent: bool = False) -> None:
         try:
             experiments = self.store.list_experiments()
         except TrackingError as exc:
-            self.call_from_thread(self._show_error, str(exc))
+            if seq == self._exp_seq:
+                self.call_from_thread(self._show_error, str(exc))
             return
         needle = self._filter_text()
         if needle and not is_mlflow_filter(needle):
             experiments = [exp for exp in experiments if needle in exp.name.lower()]
         worker = get_current_worker()
-        if worker.is_cancelled:
+        if worker.is_cancelled or seq != self._exp_seq:
             return
         self.call_from_thread(self._apply_experiments, experiments, silent)
 
@@ -226,11 +309,16 @@ class MLFlowTui(App[None]):
         previous = self.selected_experiment_id
         option_list.clear_options()
         if not experiments:
-            option_list.add_option(Option("No experiments", id="__empty", disabled=True))
+            uri = getattr(self.store, "tracking_uri", "") or ""
+            label = "No experiments"
+            if uri:
+                label = f"No experiments at {uri}"
+            option_list.add_option(Option(label, id="__empty", disabled=True))
             self.query_one("#plot", MetricPlot).clear_series()
+            self.query_one("#runs-title", Label).update("Runs")
             return
         for experiment in experiments:
-            option_list.add_option(Option(experiment.name, id=experiment.id))
+            option_list.add_option(Option(experiment.name, id=f"exp:{experiment.id}"))
         index = 0
         target = previous or self._experiment_id_by_name(self.initial_experiment)
         if target:
@@ -441,8 +529,8 @@ class MLFlowTui(App[None]):
         self.query_one("#runs", DataTable).loading = False
         self.notify(message, severity="error")
         option_list = self.query_one("#experiments", OptionList)
-        if option_list.option_count == 0:
-            option_list.add_option(Option(message, id="__error", disabled=True))
+        option_list.clear_options()
+        option_list.add_option(Option(message, id="__error", disabled=True))
 
     def _filter_text(self) -> str:
         try:

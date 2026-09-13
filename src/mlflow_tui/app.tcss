@@ -35,10 +35,27 @@ Footer {
     text-style: bold;
 }
 
+#experiments > .option-list--option-hover {
+    background: #102230;
+}
+
 #filter {
     margin: 0 1 1 1;
     background: #102230;
     border: none;
+    pointer: text;
+}
+
+#experiments,
+#runs,
+#params,
+#tags,
+#artifacts,
+#kv-tabs,
+#experiments-title,
+#runs-title,
+#run-meta {
+    pointer: pointer;
 }
 
 #main {
@@ -88,4 +105,23 @@ Tree {
 
 TabbedContent {
     height: 1fr;
+}
+
+Screen.graph-focus Header,
+Screen.graph-focus #sidebar,
+Screen.graph-focus #runs-title,
+Screen.graph-focus #runs,
+Screen.graph-focus #kv-tabs {
+    display: none;
+}
+
+Screen.graph-focus #detail {
+    height: 1fr;
+    min-height: 0;
+    border-top: none;
+}
+
+Screen.graph-focus #plot-pane {
+    width: 1fr;
+    border-right: none;
 }

@@ -73,11 +73,37 @@ uv run mlflow-tui --demo
 mlflow-tui
 mlflow-tui --tracking-uri http://localhost:5000
 mlflow-tui --tracking-uri https://mlflow.mycompany.ca
+mlflow-tui --tracking-uri https://mlflow.mycompany.ca --username warren --password 'secret'
+mlflow-tui --tracking-uri https://mlflow.mycompany.ca --username warren -p 'secret'
+mlflow-tui --tracking-uri https://user:password@mlflow.mycompany.ca
 mlflow-tui --tracking-uri file:./mlruns
 mlflow-tui --demo
 ```
 
-`MLFLOW_TRACKING_URI` and `MLFLOW_TRACKING_TOKEN` are honored the same way the official Python client uses them.
+Authentication uses the same mechanism as the official Python client:
+
+- `--username` / `--password` (or `-p`) pass basic auth on the command line
+- If `--password` is omitted, `MLFLOW_TRACKING_PASSWORD` is used, otherwise you are prompted
+- `https://user:password@host` in the tracking URI
+- `MLFLOW_TRACKING_USERNAME` and `MLFLOW_TRACKING_PASSWORD`
+- `MLFLOW_TRACKING_TOKEN` for bearer auth (`--token`)
+
+Basic auth takes precedence when a username is set. `~/.mlflow/credentials` is also honored.
+
+`uv run -p` is uv’s `--python` flag, not this app’s password flag. Use:
+
+```bash
+uv run mlflow-tui --tracking-uri https://mlflow.example --username warren --password 'secret'
+```
+
+### 403 Forbidden
+
+A 403 after you have already passed a username and password is often **not** a bad password:
+
+1. **macOS port 5000** — `localhost:5000` can resolve to IPv6 and hit Control Center AirPlay instead of MLflow. `mlflow-tui` rewrites `localhost` to `127.0.0.1`. You can also pass `--tracking-uri http://127.0.0.1:5000`.
+2. **MLflow 3 Host check** — the FastAPI server rejects unknown `Host` headers (`Invalid Host header - possible DNS rebinding attack detected`). `--allowed-hosts localhost,127.0.0.1` does **not** match `Host: 127.0.0.1:5000`. Prefer `--allowed-hosts localhost,127.0.0.1,localhost:*,127.0.0.1:*` (or `*`).
+3. **HTTP→HTTPS redirect** — proxies that bounce `http://host:5000` to `https://host` strip the `Authorization` header. Use the final `https://` tracking URI.
+4. **ACL** — basic auth succeeded but the user cannot list experiments (`Permission denied`).
 
 ### Keys
 
@@ -90,7 +116,21 @@ mlflow-tui --demo
 | `space` | Mark a run |
 | `c` | Compare marked runs |
 | `y` | Copy the selected run ID |
+| `f` | Focus the graph (hide the rest of the layout) |
+| `esc` | Leave graph focus |
 | `q` | Quit |
+
+### Mouse
+
+| Action | Result |
+| --- | --- |
+| Click an experiment or run | Select it |
+| Ctrl-click or double-click a run | Mark / unmark for compare |
+| Click the plot or run header | Cycle the plotted metric |
+| Scroll the plot | Cycle metrics |
+| Double-click the plot | Focus / unfocus the graph |
+| Click footer keys | Same as the keybinding |
+| Click outside the compare dialog | Close it |
 
 Filter accepts a substring, or an MLflow search expression such as `metrics.loss < 0.05`.
 

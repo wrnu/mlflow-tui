@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mlflow_tui.auth import apply_tracking_auth, auth_hint
 from mlflow_tui.models import (
     Artifact,
     Experiment,
@@ -60,6 +61,7 @@ class MlflowTrackingStore:
             ) from exc
 
         kwargs: dict[str, str] = {}
+        tracking_uri = apply_tracking_auth(tracking_uri, prompt_password=False)
         if tracking_uri:
             kwargs["tracking_uri"] = tracking_uri
         try:
@@ -71,7 +73,30 @@ class MlflowTrackingStore:
 
     def list_experiments(self) -> list[Experiment]:
         try:
-            pages = self._paginate(
+            pages = self._search_experiments()
+        except Exception as exc:
+            raise TrackingError(_with_auth_hint("Failed to list experiments", exc)) from exc
+        return [
+            Experiment(
+                id=str(
+                    getattr(exp, "experiment_id", None)
+                    or getattr(exp, "experimentId", None)
+                    or getattr(exp, "id", "")
+                ),
+                name=str(getattr(exp, "name", "") or ""),
+                artifact_location=str(getattr(exp, "artifact_location", "") or ""),
+            )
+            for exp in pages
+            if str(
+                getattr(exp, "experiment_id", None)
+                or getattr(exp, "experimentId", None)
+                or getattr(exp, "id", "")
+            )
+        ]
+
+    def _search_experiments(self) -> list[Any]:
+        try:
+            return self._paginate(
                 lambda token: self._client.search_experiments(
                     view_type=self._view_type.ACTIVE_ONLY,
                     max_results=1000,
@@ -80,16 +105,15 @@ class MlflowTrackingStore:
                 ),
                 limit=2000,
             )
-        except Exception as exc:
-            raise TrackingError(f"Failed to list experiments: {exc}") from exc
-        return [
-            Experiment(
-                id=str(exp.experiment_id),
-                name=str(exp.name),
-                artifact_location=str(getattr(exp, "artifact_location", "") or ""),
+        except Exception:
+            return self._paginate(
+                lambda token: self._client.search_experiments(
+                    view_type=self._view_type.ACTIVE_ONLY,
+                    max_results=1000,
+                    **({"page_token": token} if token else {}),
+                ),
+                limit=2000,
             )
-            for exp in pages
-        ]
 
     def list_runs(self, experiment_id: str, filter_string: str = "") -> list[RunSummary]:
         try:
@@ -105,14 +129,14 @@ class MlflowTrackingStore:
                 limit=1000,
             )
         except Exception as exc:
-            raise TrackingError(f"Failed to list runs: {exc}") from exc
+            raise TrackingError(_with_auth_hint("Failed to list runs", exc)) from exc
         return [run_from_mlflow(run) for run in pages]
 
     def metric_history(self, run_id: str, key: str) -> list[MetricPoint]:
         try:
             history = list(self._client.get_metric_history(run_id, key))
         except Exception as exc:
-            raise TrackingError(f"Failed to load metric '{key}': {exc}") from exc
+            raise TrackingError(_with_auth_hint(f"Failed to load metric '{key}'", exc)) from exc
         return [
             MetricPoint(
                 key=str(getattr(point, "key", key)),
@@ -129,7 +153,7 @@ class MlflowTrackingStore:
         except TypeError:
             files = list(self._client.list_artifacts(run_id, path))
         except Exception as exc:
-            raise TrackingError(f"Failed to list artifacts: {exc}") from exc
+            raise TrackingError(_with_auth_hint("Failed to list artifacts", exc)) from exc
         artifacts = []
         for info in files:
             artifacts.append(
@@ -148,9 +172,19 @@ class MlflowTrackingStore:
             page = fetch(token)
             items.extend(page)
             token = getattr(page, "token", None)
+            if isinstance(token, str):
+                token = token.strip() or None
             if not token or len(items) >= limit:
                 break
         return items[:limit]
+
+
+def _with_auth_hint(prefix: str, exc: BaseException) -> str:
+    detail = f"{prefix}: {exc}"
+    hint = auth_hint(exc)
+    if hint:
+        return f"{detail}. {hint}"
+    return detail
 
 
 def open_store(tracking_uri: str | None) -> TrackingStore:

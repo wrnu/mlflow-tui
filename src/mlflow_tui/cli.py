@@ -5,6 +5,7 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 
 from mlflow_tui import __version__
+from mlflow_tui.auth import apply_tracking_auth, auth_hint
 
 
 def _package_version() -> str:
@@ -23,7 +24,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tracking-uri",
         "-u",
         default=None,
-        help="Tracking URI (file store or server). Defaults to MLFLOW_TRACKING_URI.",
+        help="Tracking URI (file store or server). Defaults to MLFLOW_TRACKING_URI. "
+        "This is -u; username is --username / --user.",
+    )
+    parser.add_argument(
+        "--username",
+        "--user",
+        dest="username",
+        default=None,
+        help="Username for HTTP basic auth. Defaults to MLFLOW_TRACKING_USERNAME.",
+    )
+    parser.add_argument(
+        "--password",
+        "-p",
+        dest="password",
+        default=None,
+        metavar="PASSWORD",
+        help="HTTP basic auth password (command line). "
+        "If omitted, MLFLOW_TRACKING_PASSWORD is used, otherwise you are prompted. "
+        "With uv, put this after the command: uv run mlflow-tui -p 'secret' "
+        "(uv run -p is --python).",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Bearer token. Defaults to MLFLOW_TRACKING_TOKEN. "
+        "Basic auth takes precedence if a username is also set.",
     )
     parser.add_argument(
         "--demo",
@@ -64,9 +90,18 @@ def main(argv: list[str] | None = None) -> None:
         from mlflow_tui.store import open_store
 
         try:
-            store = open_store(args.tracking_uri)
+            tracking_uri = apply_tracking_auth(
+                args.tracking_uri,
+                username=args.username,
+                password=args.password,
+                token=args.token,
+            )
+            store = open_store(tracking_uri)
         except Exception as exc:
             print(f"error: {exc}", file=sys.stderr)
+            hint = auth_hint(exc)
+            if hint:
+                print(f"hint: {hint}", file=sys.stderr)
             print(
                 "hint: try `mlflow-tui --demo` to explore the UI without a tracking server",
                 file=sys.stderr,
@@ -80,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
         refresh_seconds=args.refresh,
         initial_experiment=args.experiment,
     )
-    app.run()
+    app.run(mouse=True)
 
 
 if __name__ == "__main__":

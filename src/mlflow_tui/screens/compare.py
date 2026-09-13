@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -19,6 +20,7 @@ class CompareScreen(ModalScreen[None]):
     CSS = """
     CompareScreen {
         align: center middle;
+        pointer: pointer;
     }
 
     #compare-box {
@@ -65,3 +67,7 @@ class CompareScreen(ModalScreen[None]):
         table.add_row("── params ──", *([""] * len(self.runs)))
         for key in param_keys:
             table.add_row(key, *[run.params.get(key, "-") for run in self.runs])
+
+    def on_click(self, event: events.Click) -> None:
+        if event.widget is self:
+            self.dismiss()

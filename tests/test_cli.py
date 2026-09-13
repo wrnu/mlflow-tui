@@ -22,6 +22,30 @@ def test_parse_flags() -> None:
     assert args.experiment == "LT-JEPA"
 
 
+def test_parse_auth_flags() -> None:
+    args = parse_args(
+        [
+            "--tracking-uri",
+            "https://mlflow.example",
+            "--username",
+            "alice",
+            "--password",
+            "secret",
+            "--token",
+            "tok",
+        ]
+    )
+    assert args.username == "alice"
+    assert args.password == "secret"
+    assert args.token == "tok"
+
+
+def test_parse_password_short_flag() -> None:
+    args = parse_args(["--username", "alice", "-p", "secret"])
+    assert args.username == "alice"
+    assert args.password == "secret"
+
+
 def test_parse_demo() -> None:
     args = parse_args(["--demo"])
     assert args.demo is True
