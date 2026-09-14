@@ -109,16 +109,18 @@ A 403 after you have already passed a username and password is often **not** a b
 
 ### Keys
 
-The footer keeps the everyday keys: `/` filter, `m` metric, `f` focus graph, `?` all bindings, `q` quit. Everything else still works; `?` lists them.
+The footer is a tappable toolbar for the current screen. The dashboard shows pane and metric pairs plus filter/focus; graph focus swaps those for back, log, and smooth. `?` lists every binding.
 
 | Key | Action |
 | --- | --- |
-| `tab` | Cycle panes |
+| `w` | Next pane |
+| `b` | Previous pane |
+| `i` / `j` | Move up / down (same as arrows) |
 | `/` | Filter experiments and runs |
 | `r` | Refresh |
 | `m` | Next plotted metric |
 | `n` | Previous plotted metric |
-| `l` | Toggle log Y (symlog when the series includes 0 or negatives) |
+| `l` | Toggle LogY (symlog when the series includes 0 or negatives) |
 | `s` | Toggle EMA smoothing (raw stays dim underneath) |
 | `space` | Mark a run |
 | `c` | Compare marked runs |
@@ -128,7 +130,7 @@ The footer keeps the everyday keys: `/` filter, `m` metric, `f` focus graph, `?`
 | `esc` | Leave graph focus |
 | `q` | Quit |
 
-Graph keys work after `f` (they are not in the footer): `=`/`-` zoom both axes, `[`/`]` zoom X, `i`/`o` zoom Y, arrows pan, `0` resets. Mouse wheel zooms; drag pans.
+Graph keys work after `f` (they stay off the footer): `=`/`-` zoom both axes, `[`/`]` zoom X, shift+up/`o` zoom Y, arrows pan (`i` up, `j` down too), `0` resets. Mouse wheel zooms; drag pans.
 
 ### Mouse
 

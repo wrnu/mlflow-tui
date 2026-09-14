@@ -25,12 +25,12 @@ class MetricPlot(Static):
         Binding("minus", "zoom_out", "Zoom out", show=False),
         Binding("left_square_bracket", "zoom_x_in", "Zoom X in", show=False),
         Binding("right_square_bracket", "zoom_x_out", "Zoom X out", show=False),
-        Binding("i,shift+up", "zoom_y_in", "Zoom Y in", show=False),
+        Binding("shift+up", "zoom_y_in", "Zoom Y in", show=False),
         Binding("o,shift+down", "zoom_y_out", "Zoom Y out", show=False),
         Binding("left", "pan_left", "Pan left", show=False),
         Binding("right", "pan_right", "Pan right", show=False),
-        Binding("up", "pan_up", "Pan up", show=False),
-        Binding("down", "pan_down", "Pan down", show=False),
+        Binding("up,i", "pan_up", "Pan up", show=False),
+        Binding("down,j", "pan_down", "Pan down", show=False),
         Binding("0", "reset_view", "Reset zoom", show=False),
     ]
 

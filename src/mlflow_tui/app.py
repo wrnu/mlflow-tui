@@ -94,6 +94,11 @@ class RunsTable(MarqueeDataTable):
 class ExperimentList(OptionList):
     """Experiment list: tap/click highlights, which loads that experiment's runs."""
 
+    BINDINGS = [
+        Binding("i", "cursor_up", "Up", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+    ]
+
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
         await super()._on_mouse_down(event)
         option = event.style.meta.get("option")
@@ -109,26 +114,35 @@ class ExperimentList(OptionList):
         self.highlighted = option
 
 
+class ArtifactTree(Tree):
+    BINDINGS = [
+        Binding("i", "cursor_up", "Up", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+    ]
+
+
 class MLFlowTui(App[None]):
     TITLE = "mlflow-tui"
     CSS_PATH = "app.tcss"
     BINDINGS = [
+        Binding("w", "focus_next", "Next pane"),
+        Binding("b", "focus_previous", "Prev pane"),
+        Binding("slash", "focus_filter", "Filter"),
+        Binding("m", "next_metric", "Next"),
+        Binding("n", "prev_metric", "Prev"),
+        Binding("l", "toggle_log_scale", "LogY"),
+        Binding("s", "toggle_smooth", "Smooth"),
+        Binding("f", "toggle_graph_focus", "Focus"),
+        Binding("escape", "exit_graph_focus", "Back"),
+        Binding("question_mark", "show_help", "Keys"),
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh", show=False),
-        Binding("slash", "focus_filter", "Filter"),
-        Binding("m", "next_metric", "Metric"),
-        Binding("n", "prev_metric", "Prev metric", show=False),
-        Binding("l", "toggle_log_scale", "Log", show=False),
-        Binding("s", "toggle_smooth", "Smooth", show=False),
         Binding("space", "toggle_mark", "Mark", show=False),
         Binding("c", "compare", "Compare", show=False),
         Binding("y", "copy_run_id", "Yank ID", show=False),
-        Binding("f", "toggle_graph_focus", "Focus"),
-        Binding("question_mark", "show_help", "Keys"),
-        Binding("escape", "exit_graph_focus", "Back", show=False),
     ]
     ENABLE_COMMAND_PALETTE = False
-    focused_view: reactive[bool] = reactive(False, init=False)
+    focused_view: reactive[bool] = reactive(False, init=False, bindings=True)
 
     def __init__(
         self,
@@ -185,7 +199,7 @@ class MLFlowTui(App[None]):
                         with TabPane("Tags", id="tab-tags"):
                             yield MarqueeDataTable(id="tags", cursor_type="row", zebra_stripes=True)
                         with TabPane("Artifacts", id="tab-artifacts"):
-                            yield Tree("artifacts", id="artifacts")
+                            yield ArtifactTree("artifacts", id="artifacts")
         yield WrappingFooter()
 
     def on_mount(self) -> None:
@@ -208,7 +222,7 @@ class MLFlowTui(App[None]):
         )
         self.query_one(
             "#plot", MetricPlot
-        ).tooltip = "Click: next metric · double-click: focus · f: zoom/pan · l: log · s: smooth"
+        ).tooltip = "Click: next metric · double-click: focus · f: zoom/pan · l: LogY · s: smooth"
         self.query_one("#run-meta", Label).tooltip = "Click to cycle the plotted metric"
         self.query_one(
             "#runs", DataTable
@@ -241,6 +255,11 @@ class MLFlowTui(App[None]):
             return
         if isinstance(self.focused, Input):
             self.query_one("#runs", DataTable).focus()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in {"focus_next", "focus_previous"} and self.focused_view:
+            return False
+        return True
 
     def action_focus_filter(self) -> None:
         if self.focused_view:

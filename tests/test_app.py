@@ -12,6 +12,30 @@ from mlflow_tui.screens.help import HelpScreen
 from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.plot import MetricPlot
 
+DASHBOARD_FOOTER = (
+    "Next pane",
+    "Prev pane",
+    "Filter",
+    "Next",
+    "Prev",
+    "Focus",
+    "Keys",
+    "Quit",
+)
+FOCUS_FOOTER = (
+    "Back",
+    "Next",
+    "Prev",
+    "LogY",
+    "Smooth",
+    "Keys",
+    "Quit",
+)
+
+
+def _footer_descriptions(footer: WrappingFooter) -> list[str]:
+    return [item.description for item in footer.query("FooterKey")]
+
 
 def test_demo_app_mounts_core_widgets() -> None:
     app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
@@ -96,6 +120,12 @@ def test_runs_arrow_keys_keep_rows_and_move_cursor() -> None:
             await pilot.press("up")
             await pilot.pause()
             assert table.row_count == count
+            assert table.cursor_row == first
+            await pilot.press("j")
+            await pilot.pause()
+            assert table.cursor_row != first
+            await pilot.press("i")
+            await pilot.pause()
             assert table.cursor_row == first
 
     asyncio.run(_run())
@@ -267,7 +297,7 @@ def test_m_and_n_step_metrics_forward_and_back() -> None:
     asyncio.run(_run())
 
 
-def test_question_mark_opens_help_and_zoom_stays_off_the_footer() -> None:
+def test_question_mark_opens_help_and_dashboard_footer_pairs_navigation() -> None:
     app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
 
     async def _run() -> None:
@@ -277,24 +307,68 @@ def test_question_mark_opens_help_and_zoom_stays_off_the_footer() -> None:
                 await pilot.pause()
                 if app.runs:
                     break
-            keys = footer.query("FooterKey")
-            blob = " ".join(f"{item.key_display} {item.description}" for item in keys)
-            assert "Keys" in blob or "?" in blob
-            assert "Filter" in blob
-            assert "Metric" in blob
-            assert "Focus" in blob
-            assert "Quit" in blob
-            for hidden in ("Refresh", "Log", "Mark", "Compare", "Yank", "Smooth", "Prev"):
-                assert hidden not in blob
-            assert "Zoom in" not in blob
+            assert tuple(_footer_descriptions(footer)) == DASHBOARD_FOOTER
             await pilot.press("question_mark")
             await pilot.pause()
             assert isinstance(app.screen, HelpScreen)
+            help_footer = app.screen.query_one(WrappingFooter)
+            assert _footer_descriptions(help_footer) == ["Close"]
             table = app.screen.query_one("#help-keys", DataTable)
             assert table.row_count >= 10
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, HelpScreen)
+
+    asyncio.run(_run())
+
+
+def test_graph_focus_footer_shows_back_and_graph_keys() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            plot = app.query_one("#plot", MetricPlot)
+            footer = app.query_one(WrappingFooter)
+            for _ in range(40):
+                await pilot.pause()
+                if plot._ys:
+                    break
+            await pilot.press("f")
+            await pilot.pause()
+            assert app.focused_view
+            assert plot.has_focus
+            assert tuple(_footer_descriptions(footer)) == FOCUS_FOOTER
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not app.focused_view
+            assert tuple(_footer_descriptions(footer)) == DASHBOARD_FOOTER
+
+    asyncio.run(_run())
+
+
+def test_w_and_b_cycle_panes() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            first = app.focused
+            await pilot.press("w")
+            await pilot.pause()
+            second = app.focused
+            assert second is not first
+            await pilot.press("b")
+            await pilot.pause()
+            assert app.focused is first
+            await pilot.press("f")
+            await pilot.pause()
+            focused = app.focused
+            await pilot.press("w")
+            await pilot.pause()
+            assert app.focused is focused
 
     asyncio.run(_run())
 
@@ -324,11 +398,18 @@ def test_graph_focus_zoom_and_pan_and_reset() -> None:
             await pilot.press("left_square_bracket")
             await pilot.pause()
             x_span = plot.x_span
-            y_before = plot.y_span
+            y_span_before = plot.y_span
+            await pilot.press("shift+up")
+            await pilot.pause()
+            assert plot.y_span < y_span_before
+            assert plot.x_span == x_span
+            y_before = plot.y_start
             await pilot.press("i")
             await pilot.pause()
-            assert plot.y_span < y_before
-            assert plot.x_span == x_span
+            assert plot.y_start > y_before
+            await pilot.press("j")
+            await pilot.pause()
+            assert plot.y_start == y_before
             await pilot.press("0")
             await pilot.pause()
             assert plot.x_span == 1.0
@@ -355,7 +436,6 @@ def test_footer_wraps_to_multiple_rows_when_narrow() -> None:
                 if footer.size.height >= 2:
                     break
             assert footer.size.height >= 2
-            descriptions = {item.description for item in footer.query("FooterKey")}
-            assert descriptions == {"Quit", "Filter", "Metric", "Focus", "Keys"}
+            assert tuple(_footer_descriptions(footer)) == DASHBOARD_FOOTER
 
     asyncio.run(_run())

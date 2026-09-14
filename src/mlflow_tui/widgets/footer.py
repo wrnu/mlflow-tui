@@ -4,12 +4,48 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
+from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.geometry import NULL_OFFSET, Region, Size, Spacing
 from textual.layout import ArrangeResult, Layout, WidgetPlacement
 from textual.widgets._footer import Footer as _Footer
+from textual.widgets._footer import FooterKey
 
 if TYPE_CHECKING:
     from textual.widget import Widget
+
+DASHBOARD_ACTIONS: tuple[str, ...] = (
+    "focus_next",
+    "focus_previous",
+    "focus_filter",
+    "next_metric",
+    "prev_metric",
+    "toggle_graph_focus",
+    "show_help",
+    "quit",
+)
+FOCUS_ACTIONS: tuple[str, ...] = (
+    "exit_graph_focus",
+    "next_metric",
+    "prev_metric",
+    "toggle_log_scale",
+    "toggle_smooth",
+    "show_help",
+    "quit",
+)
+MODAL_ACTIONS: tuple[str, ...] = ("dismiss",)
+
+
+def action_name(action: str) -> str:
+    return action.rsplit(".", 1)[-1]
+
+
+def footer_actions(*, modal: bool, graph_focus: bool) -> tuple[str, ...]:
+    if modal:
+        return MODAL_ACTIONS
+    if graph_focus:
+        return FOCUS_ACTIONS
+    return DASHBOARD_ACTIONS
 
 
 def footer_item_width(key_display: str, description: str, *, compact: bool) -> int:
@@ -82,8 +118,20 @@ class WrapLayout(Layout):
         return placements
 
 
+class FooterActionKey(FooterKey):
+    """Footer button that runs the action instead of synthesizing a key chord."""
+
+    def on_mouse_down(self) -> None:
+        if self._disabled:
+            self.app.bell()
+            return
+        name = action_name(self.action)
+        namespace = self.screen if name == "dismiss" else self.app
+        self.app.call_next(self.app.run_action, self.action, namespace)
+
+
 class WrappingFooter(_Footer):
-    """Key bindings that wrap to extra rows instead of scrolling off-screen."""
+    """Tappable keys for the current screen, wrapping instead of scrolling away."""
 
     DEFAULT_CSS = """
     WrappingFooter {
@@ -105,3 +153,31 @@ class WrappingFooter(_Footer):
     @property
     def layout(self) -> Layout:
         return self._wrap_layout
+
+    def compose(self) -> ComposeResult:
+        if not self._bindings_ready:
+            return
+        allowed = footer_actions(
+            modal=self.screen.is_modal,
+            graph_focus=bool(getattr(self.app, "focused_view", False)),
+        )
+        by_action: dict[str, Binding] = {}
+        for node in (self.screen, self.app):
+            for _key, binding in node._bindings:
+                if not binding.show:
+                    continue
+                name = action_name(binding.action)
+                if name not in allowed or name in by_action:
+                    continue
+                by_action[name] = binding
+        for action in allowed:
+            binding = by_action.get(action)
+            if binding is None:
+                continue
+            yield FooterActionKey(
+                binding.key,
+                self.app.get_key_display(binding),
+                binding.description,
+                binding.action,
+                tooltip=binding.tooltip,
+            ).data_bind(compact=_Footer.compact)

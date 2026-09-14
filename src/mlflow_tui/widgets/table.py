@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rich.cells import cell_len
+from textual.binding import Binding
 from textual.widgets import DataTable
 
 from mlflow_tui.marquee import marquee_offset, marquee_slice
@@ -9,6 +10,10 @@ from mlflow_tui.marquee import marquee_offset, marquee_slice
 class MarqueeDataTable(DataTable[object]):
     """DataTable that scrolls overflowing cells on the highlighted row."""
 
+    BINDINGS = [
+        Binding("i", "cursor_up", "Up", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+    ]
     marquee_columns: set[str] = set()
 
     def __init__(self, *args: object, **kwargs: object) -> None:
