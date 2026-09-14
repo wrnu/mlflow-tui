@@ -3,7 +3,7 @@ name = "mlflow-tui"
 version = "0.1.0"
 description = "A terminal UI for MLflow tracking — browse experiments, inspect runs, and watch live metrics."
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
     { name = "Warren Uniewski", email = "warren@autimo.com" }
@@ -15,6 +15,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
