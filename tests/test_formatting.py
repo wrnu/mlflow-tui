@@ -335,3 +335,29 @@ def test_line_chart_smooth_keeps_x_labels_without_filling_the_axis() -> None:
     plot_row = lines[axis - 1]
     filled = sum(1 for char in plot_row if 0x2800 <= ord(char) <= 0x28FF)
     assert filled < 20
+
+
+def test_padded_bounds_do_not_cross_zero_when_data_does_not() -> None:
+    from mlflow_tui.formatting import _padded_bounds
+
+    lo, hi = _padded_bounds(0.0, 1.0)
+    assert lo == 0.0
+    assert hi > 1.0
+    lo, hi = _padded_bounds(-1.0, 0.0)
+    assert hi == 0.0
+    assert lo < -1.0
+    lo, hi = _padded_bounds(-1.0, 1.0)
+    assert lo < 0.0 < hi
+
+
+def test_line_chart_zero_last_sits_on_the_zero_tick() -> None:
+    from mlflow_tui.formatting import render_line_chart
+
+    values = [1.0 - i / 20 for i in range(21)]
+    lines = render_line_chart(values, width=48, height=15, title="loss").plain.splitlines()
+    zero = next(line for line in lines if line.lstrip().startswith("0 ") and "┤" in line)
+    axis = next(index for index, line in enumerate(lines) if "└" in line)
+    zero_index = lines.index(zero)
+    assert any(0x2800 <= ord(char) <= 0x28FF for char in zero)
+    for line in lines[zero_index + 1 : axis]:
+        assert not any(0x2800 <= ord(char) <= 0x28FF for char in line)

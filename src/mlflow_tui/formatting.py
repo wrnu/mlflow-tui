@@ -320,7 +320,13 @@ def _padded_bounds(lo: float, hi: float, pad: float = 0.06) -> tuple[float, floa
         delta = max(abs(lo) * 0.1, 1e-6)
         return lo - delta, hi + delta
     span = hi - lo
-    return lo - span * pad, hi + span * pad
+    lo_p = lo - span * pad
+    hi_p = hi + span * pad
+    if lo >= 0:
+        lo_p = max(0.0, lo_p)
+    if hi <= 0:
+        hi_p = min(0.0, hi_p)
+    return lo_p, hi_p
 
 
 MIN_VIEW_SPAN = 0.04
@@ -411,17 +417,27 @@ def _padded_axis_bounds(
     return t_lo, t_hi
 
 
-def _scale(value: float, lo: float, hi: float, size: int) -> int:
-    if size <= 1 or hi == lo:
-        return 0
-    t = (value - lo) / (hi - lo)
-    return max(0, min(size - 1, int(round(t * (size - 1)))))
-
-
 def _scale_free(value: float, lo: float, hi: float, size: int) -> int:
     if size <= 1 or hi == lo:
         return 0
     return int(round((value - lo) / (hi - lo) * (size - 1)))
+
+
+def _value_plot_row(
+    value: float,
+    t_lo: float,
+    t_hi: float,
+    plot_h: int,
+    *,
+    mode: str,
+    linthresh: float,
+) -> int:
+    """Character row for a y value, using the same braille grid as the line."""
+    canvas_h = plot_h * 4
+    py = (canvas_h - 1) - _scale_free(
+        _axis_y(value, mode=mode, linthresh=linthresh), t_lo, t_hi, canvas_h
+    )
+    return max(0, min(plot_h - 1, py // 4))
 
 
 def _plot_dot(cells: list[int], plot_w: int, plot_h: int, px: int, py: int) -> None:
@@ -690,8 +706,7 @@ def render_line_chart(
         )
 
     tick_rows = {
-        (plot_h - 1)
-        - _scale(_axis_y(tick, mode=log_mode, linthresh=linthresh), t_lo, t_hi, plot_h): tick
+        _value_plot_row(tick, t_lo, t_hi, plot_h, mode=log_mode, linthresh=linthresh): tick
         for tick in ticks
     }
 
