@@ -26,6 +26,7 @@ KEY_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("space", "Mark a run"),
             ("c", "Compare marked runs"),
             ("y", "Copy the selected run ID"),
+            ("d", "Delete the selected run"),
             ("f", "Focus the graph (zoom and pan keys work here)"),
             ("esc", "Leave graph focus"),
             ("?", "This help"),

@@ -34,7 +34,7 @@ FOCUS_ACTIONS: tuple[str, ...] = (
     "show_help",
     "quit",
 )
-MODAL_ACTIONS: tuple[str, ...] = ("dismiss",)
+MODAL_ACTIONS: tuple[str, ...] = ("confirm", "dismiss")
 
 
 def action_name(action: str) -> str:
@@ -127,7 +127,7 @@ class FooterActionKey(FooterKey):
             self.app.bell()
             return
         name = action_name(self.action)
-        namespace = self.screen if name == "dismiss" else self.app
+        namespace = self.screen if name in {"confirm", "dismiss"} else self.app
         self.app.call_next(self.app.run_action, self.action, namespace)
 
 

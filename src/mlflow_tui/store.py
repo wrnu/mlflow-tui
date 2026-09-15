@@ -165,6 +165,12 @@ class MlflowTrackingStore:
             )
         return artifacts
 
+    def delete_run(self, run_id: str) -> None:
+        try:
+            self._client.delete_run(run_id)
+        except Exception as exc:
+            raise TrackingError(_with_auth_hint("Failed to delete run", exc)) from exc
+
     def _paginate(self, fetch: Any, *, limit: int) -> list[Any]:
         items: list[Any] = []
         token = None

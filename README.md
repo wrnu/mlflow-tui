@@ -13,7 +13,7 @@ The browser UI is the right tool for some things. It is not the right tool when 
 - Experiments and runs in a single dashboard, with live refresh (default 3s)
 - Braille metric charts: LogY, TensorBoard-style EMA smoothing, zoom and pan
 - Params, tags, and artifacts for the selected run
-- Mark runs and compare them
+- Mark runs to compare them, or delete a run
 - Mouse and keyboard; `?` lists every key
 - Built-in `--demo` workspace so you can try it without a tracking server
 

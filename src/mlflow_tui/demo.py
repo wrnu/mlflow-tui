@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import replace
 
-from mlflow_tui.models import Artifact, Experiment, MetricPoint, RunSummary
+from mlflow_tui.models import Artifact, Experiment, MetricPoint, RunSummary, TrackingError
 
 
 def _now_ms() -> int:
@@ -80,6 +80,21 @@ class DemoTrackingStore:
             elif "/" not in artifact.path:
                 out.append(artifact)
         return out
+
+    def delete_run(self, run_id: str) -> None:
+        with self._lock:
+            found = False
+            for experiment_id, runs in self._runs.items():
+                keep = [run for run in runs if run.id != run_id]
+                if len(keep) != len(runs):
+                    self._runs[experiment_id] = keep
+                    found = True
+                    break
+            if not found:
+                raise TrackingError(f"Run not found: {run_id}")
+            for key in [item for item in self._history if item[0] == run_id]:
+                del self._history[key]
+            self._artifacts.pop(run_id, None)
 
     def _copy_run(self, run: RunSummary) -> RunSummary:
         return replace(

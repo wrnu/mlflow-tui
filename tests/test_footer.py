@@ -35,4 +35,4 @@ def test_footer_actions_depend_on_screen() -> None:
     assert focus[0] == "exit_graph_focus"
     assert "zoom_in" not in focus
     assert "reset_view" not in focus
-    assert footer_actions(modal=True, graph_focus=True) == ("dismiss",)
+    assert footer_actions(modal=True, graph_focus=True) == ("confirm", "dismiss")

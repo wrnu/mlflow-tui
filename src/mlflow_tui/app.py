@@ -41,6 +41,7 @@ from mlflow_tui.formatting import (
 from mlflow_tui.marquee import ellipsize, marquee_offset, marquee_slice, sidebar_width
 from mlflow_tui.models import Artifact, Experiment, RunSummary, TrackingError, TrackingStore
 from mlflow_tui.screens.compare import CompareScreen
+from mlflow_tui.screens.delete import DeleteRunScreen
 from mlflow_tui.screens.help import HelpScreen
 from mlflow_tui.terminal import install_quiet_driver, keep_probes_off, keep_terminal_quiet
 from mlflow_tui.widgets.footer import WrappingFooter
@@ -141,6 +142,7 @@ class MLFlowTui(App[None]):
         Binding("space", "toggle_mark", "Mark", show=False),
         Binding("c", "compare", "Compare", show=False),
         Binding("y", "copy_run_id", "Yank ID", show=False),
+        Binding("d", "delete_run", "Delete", show=False),
     ]
     ENABLE_COMMAND_PALETTE = False
     focused_view: reactive[bool] = reactive(False, init=False, bindings=True)
@@ -486,6 +488,41 @@ class MLFlowTui(App[None]):
         self.copy_to_clipboard(self.selected_run_id)
         self.notify(f"Copied {self.selected_run_id}")
 
+    def action_delete_run(self) -> None:
+        if not self.selected_run_id:
+            self.notify("Select a run first")
+            return
+        run_id = self.selected_run_id
+        run = self.runs_by_id.get(run_id)
+        name = run.name if run else run_id
+        self.push_screen(
+            DeleteRunScreen(name, run_id),
+            lambda ok: self._on_delete_confirmed(run_id, ok),
+        )
+
+    def _on_delete_confirmed(self, run_id: str, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        self._delete_run(run_id)
+
+    @work(thread=True, exclusive=True, group="delete")
+    def _delete_run(self, run_id: str) -> None:
+        try:
+            self.store.delete_run(run_id)
+        except TrackingError as exc:
+            self.call_from_thread(self.notify, str(exc), severity="error")
+            return
+        except Exception as exc:
+            self.call_from_thread(self.notify, f"Failed to delete run: {exc}", severity="error")
+            return
+        self.call_from_thread(self._after_delete, run_id)
+
+    def _after_delete(self, run_id: str) -> None:
+        self.marked_run_ids.discard(run_id)
+        if self.selected_experiment_id:
+            self.reload_runs(self.selected_experiment_id, silent=True)
+        self.notify(f"Deleted {run_id}")
+
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
 
@@ -627,6 +664,8 @@ class MLFlowTui(App[None]):
             self.selected_run_id = None
             self.query_one("#plot", MetricPlot).clear_series()
             self.query_one("#run-meta", Label).update("No runs")
+            if self.focused_view:
+                self.focused_view = False
             return
         selected = self.selected_run_id if self.selected_run_id in self.runs_by_id else runs[0].id
         self.selected_run_id = selected

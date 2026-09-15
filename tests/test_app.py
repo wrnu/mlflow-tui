@@ -8,6 +8,7 @@ from textual.widgets import DataTable, Input, OptionList
 
 from mlflow_tui.app import MLFlowTui
 from mlflow_tui.demo import DemoTrackingStore
+from mlflow_tui.screens.delete import DeleteRunScreen
 from mlflow_tui.screens.help import HelpScreen
 from mlflow_tui.widgets.footer import WrappingFooter
 from mlflow_tui.widgets.plot import MetricPlot
@@ -470,5 +471,55 @@ def test_footer_wraps_to_multiple_rows_when_narrow() -> None:
                     break
             assert footer.size.height >= 2
             assert tuple(_footer_descriptions(footer)) == DASHBOARD_FOOTER
+
+    asyncio.run(_run())
+
+
+def test_d_opens_delete_confirm_and_escape_cancels() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            assert app.selected_run_id == "0042"
+            await pilot.press("d")
+            await pilot.pause()
+            assert isinstance(app.screen, DeleteRunScreen)
+            footer = app.screen.query_one(WrappingFooter)
+            assert _footer_descriptions(footer) == ["Delete", "Cancel"]
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, DeleteRunScreen)
+            assert app.selected_run_id == "0042"
+            assert [run.id for run in app.runs][0] == "0042"
+
+    asyncio.run(_run())
+
+
+def test_d_deletes_selected_run_after_confirm() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            assert app.selected_run_id == "0042"
+            app.marked_run_ids.add("0042")
+            await pilot.press("d")
+            await pilot.pause()
+            assert isinstance(app.screen, DeleteRunScreen)
+            await pilot.press("enter")
+            for _ in range(40):
+                await pilot.pause()
+                if app.selected_run_id == "0041":
+                    break
+            assert app.selected_run_id == "0041"
+            assert all(run.id != "0042" for run in app.runs)
+            assert "0042" not in app.marked_run_ids
 
     asyncio.run(_run())

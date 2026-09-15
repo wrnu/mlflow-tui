@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from mlflow_tui.demo import DemoTrackingStore
+from mlflow_tui.models import TrackingError
 from mlflow_tui.store import run_from_mlflow
 
 
@@ -62,3 +65,17 @@ def test_demo_filter_is_local() -> None:
     store = DemoTrackingStore(seed=1)
     matches = store.list_runs("1", filter_string="failed")
     assert [run.name for run in matches] == ["run-0040"]
+
+
+def test_demo_store_delete_run() -> None:
+    store = DemoTrackingStore(seed=1)
+    store.delete_run("0042")
+    assert [run.id for run in store.list_runs("1")] == ["0041", "0040", "0039"]
+    assert store.metric_history("0042", "loss") == []
+    assert store.list_artifacts("0042") == []
+
+
+def test_demo_store_delete_missing_run() -> None:
+    store = DemoTrackingStore(seed=1)
+    with pytest.raises(TrackingError, match="Run not found"):
+        store.delete_run("missing")
