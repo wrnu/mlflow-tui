@@ -25,6 +25,8 @@ def test_footer_actions_depend_on_screen() -> None:
     assert "focus_next" in dashboard and "focus_previous" in dashboard
     assert "next_metric" in dashboard and "prev_metric" in dashboard
     assert "toggle_graph_focus" in dashboard
+    assert "toggle_sidebar" in dashboard
+    assert "toggle_sidebar" not in focus
     assert "exit_graph_focus" not in dashboard
     assert "zoom_in" not in dashboard
     assert "focus_next" not in focus

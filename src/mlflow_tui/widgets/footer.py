@@ -18,6 +18,7 @@ DASHBOARD_ACTIONS: tuple[str, ...] = (
     "focus_next",
     "focus_previous",
     "focus_filter",
+    "toggle_sidebar",
     "next_metric",
     "prev_metric",
     "toggle_graph_focus",

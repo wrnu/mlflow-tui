@@ -128,6 +128,7 @@ class MLFlowTui(App[None]):
         Binding("w", "focus_next", "Next pane"),
         Binding("b", "focus_previous", "Prev pane"),
         Binding("slash", "focus_filter", "Filter"),
+        Binding("e", "toggle_sidebar", "Sidebar"),
         Binding("m", "next_metric", "Next"),
         Binding("n", "prev_metric", "Prev"),
         Binding("l", "toggle_log_scale", "LogY"),
@@ -143,6 +144,7 @@ class MLFlowTui(App[None]):
     ]
     ENABLE_COMMAND_PALETTE = False
     focused_view: reactive[bool] = reactive(False, init=False, bindings=True)
+    sidebar_hidden: reactive[bool] = reactive(False, init=False, bindings=True)
 
     def __init__(
         self,
@@ -234,6 +236,20 @@ class MLFlowTui(App[None]):
         self.call_after_refresh(self._install_quiet_input)
         self.reload_experiments()
 
+    def watch_sidebar_hidden(self, hidden: bool) -> None:
+        self.screen.set_class(hidden, "sidebar-hidden")
+        if hidden and not self.focused_view:
+            focused = self.focused
+            if focused is not None and any(
+                node.id == "sidebar" for node in focused.ancestors_with_self
+            ):
+                self.query_one("#runs", DataTable).focus()
+
+    def action_toggle_sidebar(self) -> None:
+        if self.focused_view:
+            return
+        self.sidebar_hidden = not self.sidebar_hidden
+
     def watch_focused_view(self, focused: bool) -> None:
         self.screen.set_class(focused, "graph-focus")
         plot = self.query_one("#plot", MetricPlot)
@@ -263,6 +279,10 @@ class MLFlowTui(App[None]):
 
     def action_focus_filter(self) -> None:
         if self.focused_view:
+            return
+        if self.sidebar_hidden:
+            self.sidebar_hidden = False
+            self.call_after_refresh(self.query_one("#filter", Input).focus)
             return
         self.query_one("#filter", Input).focus()
 

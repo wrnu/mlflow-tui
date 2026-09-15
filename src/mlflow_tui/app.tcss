@@ -26,6 +26,10 @@ Footer {
     border-right: tall #1c2c3a;
 }
 
+Screen.sidebar-hidden #sidebar {
+    display: none;
+}
+
 #experiments {
     height: 1fr;
     border: none;

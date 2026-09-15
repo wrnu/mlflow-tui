@@ -16,6 +16,7 @@ DASHBOARD_FOOTER = (
     "Next pane",
     "Prev pane",
     "Filter",
+    "Sidebar",
     "Next",
     "Prev",
     "Focus",
@@ -94,6 +95,38 @@ def test_graph_focus_hides_chrome_and_restores() -> None:
             assert not app.focused_view
             assert sidebar.display
             assert runs.display
+
+    asyncio.run(_run())
+
+
+def test_e_toggles_the_experiments_sidebar() -> None:
+    app = MLFlowTui(store=DemoTrackingStore(seed=1), refresh_seconds=0)
+
+    async def _run() -> None:
+        async with app.run_test(size=(140, 42)) as pilot:
+            for _ in range(40):
+                await pilot.pause()
+                if app.runs:
+                    break
+            sidebar = app.query_one("#sidebar")
+            assert sidebar.display
+            await pilot.press("e")
+            await pilot.pause()
+            assert app.sidebar_hidden
+            assert app.screen.has_class("sidebar-hidden")
+            assert not sidebar.display
+            await pilot.press("slash")
+            await pilot.pause()
+            assert not app.sidebar_hidden
+            assert sidebar.display
+            assert isinstance(app.focused, Input)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            assert app.sidebar_hidden
+            assert not sidebar.display
+            assert not isinstance(app.focused, Input)
 
     asyncio.run(_run())
 

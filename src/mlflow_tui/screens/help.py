@@ -17,6 +17,7 @@ KEY_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("b", "Previous pane"),
             ("i / j", "Move up / down (same as arrows)"),
             ("/", "Filter experiments and runs"),
+            ("e", "Toggle the experiments sidebar"),
             ("r", "Refresh"),
             ("m", "Next plotted metric"),
             ("n", "Previous plotted metric"),
