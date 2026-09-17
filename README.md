@@ -2,6 +2,8 @@
 
 A terminal UI for [MLflow](https://mlflow.org) tracking. Browse experiments, inspect runs, and watch live metrics without leaving the shell.
 
+![mlflow-tui dashboard showing experiments, runs, and a live loss plot](docs/screenshots/dashboard.png)
+
 This is a **client** for the same tracking API as `mlflow ui`. It does not replace the MLflow server, and it is not an official MLflow or Databricks project.
 
 ## Why
@@ -16,6 +18,8 @@ The browser UI is the right tool for some things. It is not the right tool when 
 - Mark runs to compare them, or delete a run
 - Mouse and keyboard; `?` lists every key
 - Built-in `--demo` workspace so you can try it without a tracking server
+
+![Focused metric graph for a running demo experiment](docs/screenshots/graph.png)
 
 ## Install
 
@@ -82,6 +86,7 @@ uv run pytest
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mlflow-tui --demo
+uv run python scripts/capture_screenshots.py
 ```
 
 ## License
